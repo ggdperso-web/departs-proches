@@ -20,17 +20,17 @@
 /* Mise en page : carte en haut (40 % de l'écran), liste des arrêts en dessous classés par distance, chaque ligne sous forme de pastille colorée comme sur les quais. */
 :root{
   --bg:#eef1f2; --surface:#ffffff; --fg:#14201f; --muted:#5d6b6c; --line:#d9dfe0;
-  --accent:#0b6e75; --accent-soft:#dcefef; --rt:#1a9c55; --warn:#c0571f; --chip:#e4e9ea;
+  --accent:#0b6e75; --accent-soft:#dcefef; --velib:#5c8f3a; --rt:#1a9c55; --warn:#c0571f; --chip:#e4e9ea;
   --f-display:"Archivo","Arial Narrow",ui-sans-serif,system-ui,sans-serif;
   --f-body:"Atkinson Hyperlegible",ui-sans-serif,system-ui,-apple-system,sans-serif;
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#0f1416; --surface:#182022; --fg:#e7eeee; --muted:#93a3a4; --line:#283336;
-  --accent:#5cc3c9; --accent-soft:#163236; --rt:#4cd38a; --warn:#f0965c; --chip:#212b2e; color-scheme:dark}}
+  --accent:#5cc3c9; --accent-soft:#163236; --velib:#7fb85a; --rt:#4cd38a; --warn:#f0965c; --chip:#212b2e; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#0f1416; --surface:#182022; --fg:#e7eeee; --muted:#93a3a4; --line:#283336;
-  --accent:#5cc3c9; --accent-soft:#163236; --rt:#4cd38a; --warn:#f0965c; --chip:#212b2e; color-scheme:dark}
+  --accent:#5cc3c9; --accent-soft:#163236; --velib:#7fb85a; --rt:#4cd38a; --warn:#f0965c; --chip:#212b2e; color-scheme:dark}
 
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -91,6 +91,25 @@ main{flex:1;padding:12px 16px calc(env(safe-area-inset-bottom,0px) + 32px);displ
 .legend{font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
 .legend i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--rt);margin-right:4px}
 .more{width:100%;padding:9px 14px;border-top:1px solid var(--line);color:var(--accent);font-weight:700;font-size:14px;text-align:left}
+.alerts{display:flex;flex-direction:column;gap:6px;padding:0 14px 10px}
+.alert{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;text-align:left;width:100%;padding:8px 10px;border-radius:10px;background:color-mix(in srgb,var(--sev) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--sev) 40%,transparent)}
+.alert .ic{color:var(--sev);font-weight:800}
+.alert .sum{font-size:14px;font-weight:700;min-width:0;overflow-wrap:anywhere}
+.alert .chev{color:var(--muted);font-size:13px}
+.alert-txt{font-size:14px;color:var(--fg);padding:2px 4px 6px;white-space:pre-line;max-width:65ch}
+.warn-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--warn);margin-left:4px;vertical-align:1px}
+.bikes{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.bikes h3{font:700 18px/1.2 var(--f-display);font-stretch:90%;margin:0;padding:12px 14px 8px;display:flex;align-items:center;gap:8px}
+.bikes h3 .vb{background:var(--velib);color:#fff;border-radius:6px;padding:3px 6px;font-size:13px}
+.bk{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:9px 14px;border-top:1px solid var(--line);align-items:center}
+.bk .n{font-weight:700;min-width:0;overflow-wrap:anywhere}
+.bk .d{font-size:13px;color:var(--muted);grid-column:1}
+.bk .c{grid-row:1/3;grid-column:2;display:flex;gap:12px;font-variant-numeric:tabular-nums;text-align:center}
+.bk .c span{display:flex;flex-direction:column;font:700 18px/1.1 var(--f-display);font-stretch:90%}
+.bk .c small{font:400 11px var(--f-body);color:var(--muted)}
+.bk .c .zero{color:var(--muted);opacity:.7}
+.bk.off{opacity:.55}
+.bike-pin{width:14px;height:14px;border-radius:4px;background:var(--velib);border:2px solid #fff;box-shadow:0 1px 3px rgb(0 0 0 / .3)}
 .empty-deps{padding:10px 14px 14px;color:var(--muted);font-size:14px;border-top:1px solid var(--line)}
 
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:10px}
@@ -156,8 +175,8 @@ const GEOCODE = "https://data.geopf.fr/geocodage/search";
 const MODES = [
   ["metro", "Métro"], ["rer", "RER & trains"], ["tram", "Tramway"], ["bus", "Bus"]
 ];
-const settings = Object.assign({key: "", radius: 500, modes: ["metro","rer","tram","bus"]}, store("dp:settings") || {});
-const state = {place: store("dp:place") || null, stops: [], deps: {}, open: {}, sel: null, loading: false, err: null, updated: 0};
+const settings = Object.assign({key: "", radius: 500, modes: ["metro","rer","tram","bus"], velib: true}, store("dp:settings") || {});
+const state = {place: store("dp:place") || null, stops: [], deps: {}, bikes: null, alertOpen: {}, open: {}, sel: null, loading: false, err: null, updated: 0};
 
 /* ---------- Quota : 1 000 appels par jour sur un compte PRIM gratuit ---------- */
 function countCall(){
@@ -248,7 +267,7 @@ function fitMap(){
 /* ---------- Chargement ---------- */
 async function setPlace(place){
   state.place = place; store("dp:place", place);
-  state.stops = []; state.deps = {}; state.sel = null; state.err = null;
+  state.stops = []; state.deps = {}; state.bikes = null; state.sel = null; state.err = null; drawBikes();
   drawMap(); render();
   await loadStops();
 }
@@ -261,6 +280,7 @@ async function loadStops(){
     state.stops = list.map(p => ({id: p.id, name: p.stop_area.name || p.name, lat: +p.stop_area.coord.lat, lon: +p.stop_area.coord.lon, dist: +p.distance || 0}))
                       .sort((a,b) => a.dist - b.dist);
     drawMap(); fitMap();
+    loadBikes();
     await loadDeps(state.stops.slice(0, 6).map(s => s.id));
   }catch(e){ state.err = e; }
   state.loading = false; render();
@@ -271,7 +291,10 @@ async function loadDeps(ids){
     state.deps[id].loading = true; render();
     try{
       const j = await prim(`/stop_areas/${encodeURIComponent(id)}/departures?count=40&duration=7200&data_freshness=realtime&depth=1`);
-      state.deps[id] = {loading: false, groups: groupDeps(j.departures || []), at: Date.now()};
+      const alerts = parseDisruptions(j.disruptions || []);
+      const groups = groupDeps(j.departures || []);
+      for (const g of groups) g.alert = alerts.some(a => a.lines.includes(g.code) || a.stop);
+      state.deps[id] = {loading: false, groups, alerts: alerts.filter(a => a.stop || groups.some(g => a.lines.includes(g.code))), at: Date.now()};
     }catch(e){
       state.deps[id] = {loading: false, error: e};
       if (e.kind === "auth" || e.kind === "quota" || e.kind === "network") state.err = e;
@@ -280,6 +303,40 @@ async function loadDeps(ids){
   state.updated = Date.now();
   render();
 }
+/* Perturbations : messages d'Île-de-France Mobilités livrés avec les départs */
+function stripHtml(t){ const d = document.createElement("div"); d.innerHTML = String(t || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n"); return (d.textContent || "").replace(/\n{3,}/g, "\n\n").trim(); }
+function parseDisruptions(list){
+  const out = [];
+  for (const d of list){
+    if (d.status && d.status !== "active") continue;
+    const lines = [], stop = (d.impacted_objects || []).some(o => o.pt_object && /stop_area|stop_point/.test(o.pt_object.embedded_type || ""));
+    for (const o of d.impacted_objects || []){
+      const po = o.pt_object || {};
+      if (po.embedded_type === "line" && po.line) lines.push(po.line.code || po.name);
+      if (po.embedded_type === "route" && po.route && po.route.line) lines.push(po.route.line.code);
+    }
+    const msgs = (d.messages || []).map(m => ({t: stripHtml(m.text), types: (m.channel && m.channel.types) || []}));
+    const title = (msgs.find(m => m.types.includes("title")) || {}).t;
+    const body = (msgs.find(m => m.types.includes("mobile")) || msgs.find(m => m.types.includes("web")) || msgs.sort((a,b) => b.t.length - a.t.length)[0] || {}).t || "";
+    const eff = (d.severity && d.severity.effect) || "";
+    const sev = /NO_SERVICE|REDUCED_SERVICE|SIGNIFICANT_DELAYS|DETOUR/.test(eff) || (d.severity && d.severity.priority <= 10) ? "high" : "low";
+    if (!body && !title) continue;
+    out.push({id: d.id || d.disruption_id, lines: [...new Set(lines.filter(Boolean))], stop: stop && !lines.length, title: title || "", body, sev, label: (d.severity && d.severity.name) || "", cause: d.cause || ""});
+  }
+  return out.sort((a,b) => (a.sev === "high" ? 0 : 1) - (b.sev === "high" ? 0 : 1));
+}
+function alertsHtml(stopId, alerts){
+  if (!alerts || !alerts.length) return "";
+  return `<div class="alerts">${alerts.slice(0, 4).map(a => {
+    const k = stopId + "|" + a.id, open = state.alertOpen[k];
+    const who = a.lines.length ? "Ligne" + (a.lines.length > 1 ? "s " : " ") + a.lines.join(", ") : "Cet arrêt";
+    const sum = a.title || (a.body.split("\n")[0].slice(0, 110) + (a.body.length > 110 ? "…" : ""));
+    return `<button class="alert" data-alert="${esc(k)}" aria-expanded="${!!open}" style="--sev:${a.sev === "high" ? "var(--warn)" : "var(--muted)"}">
+      <span class="ic" aria-hidden="true">⚠</span><span class="sum">${esc(who)} : ${esc(sum)}</span><span class="chev">${open ? "▲" : "▼"}</span></button>
+      ${open ? `<div class="alert-txt">${esc(a.body)}</div>` : ""}`;
+  }).join("")}${alerts.length > 4 ? `<span class="small">et ${alerts.length - 4} autre${alerts.length > 5 ? "s" : ""} perturbation${alerts.length > 5 ? "s" : ""}</span>` : ""}</div>`;
+}
+
 function groupDeps(deps){
   const g = new Map(), now = Date.now();
   for (const d of deps){
@@ -295,6 +352,47 @@ function groupDeps(deps){
   }
   return [...g.values()].map(x => (x.times.sort((a,b) => a.at - b.at), x))
     .sort((a,b) => MODE_ORDER[a.mode] - MODE_ORDER[b.mode] || a.code.localeCompare(b.code, "fr", {numeric: true}) || a.times[0].at - b.times[0].at);
+}
+
+/* ---------- Vélib' ---------- */
+const VELIB = "https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/velib-disponibilite-en-temps-reel/records";
+const yes = v => v === true || v === "OUI" || v === "oui" || v === 1 || v === "1";
+async function loadBikes(){
+  if (!settings.velib || !state.place){ state.bikes = null; drawBikes(); return; }
+  const pt = `geom'POINT(${state.place.lon.toFixed(6)} ${state.place.lat.toFixed(6)})'`;
+  const url = `${VELIB}?where=${encodeURIComponent(`within_distance(coordonnees_geo, ${pt}, ${Math.max(settings.radius, 400)}m)`)}&order_by=${encodeURIComponent(`distance(coordonnees_geo, ${pt})`)}&limit=8`;
+  try{
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    state.bikes = (j.results || []).filter(b => b.coordonnees_geo).map(b => {
+      const lat = +b.coordonnees_geo.lat, lon = +b.coordonnees_geo.lon;
+      return {name: b.name, lat, lon, dist: distM(state.place.lat, state.place.lon, lat, lon),
+        meca: +b.mechanical || 0, elec: +b.ebike || 0, docks: +b.numdocksavailable || 0,
+        open: yes(b.is_renting) && (b.is_installed === undefined || yes(b.is_installed))};
+    });
+  }catch(e){ state.bikes = {error: true}; }
+  drawBikes(); render();
+}
+function distM(a1,o1,a2,o2){ const R = 6371000, r = Math.PI/180, x = Math.sin((a2-a1)*r/2)**2 + Math.cos(a1*r)*Math.cos(a2*r)*Math.sin((o2-o1)*r/2)**2; return 2*R*Math.asin(Math.sqrt(x)); }
+let bikeLayer = null;
+function drawBikes(){
+  if (!map) return;
+  if (!bikeLayer) bikeLayer = L.layerGroup().addTo(map);
+  bikeLayer.clearLayers();
+  if (!Array.isArray(state.bikes)) return;
+  for (const b of state.bikes){
+    bikeLayer.addLayer(L.marker([b.lat, b.lon], {icon: L.divIcon({className: "", html: '<div class="bike-pin"></div>', iconSize: [14,14], iconAnchor: [7,7]}), title: `Vélib' ${b.name}`})
+      .bindPopup(`<b>${esc(b.name)}</b><br>${b.meca} mécanique${b.meca > 1 ? "s" : ""} · ${b.elec} électrique${b.elec > 1 ? "s" : ""} · ${b.docks} place${b.docks > 1 ? "s" : ""}`));
+  }
+}
+function bikesHtml(){
+  if (!settings.velib || state.bikes === null) return "";
+  if (state.bikes.error) return `<div class="bikes"><h3><span class="vb">Vélib'</span>Stations proches</h3><div class="empty-deps">Les disponibilités Vélib' n'ont pas pu être chargées.</div></div>`;
+  if (!state.bikes.length) return `<div class="bikes"><h3><span class="vb">Vélib'</span>Stations proches</h3><div class="empty-deps">Aucune station Vélib' dans la zone.</div></div>`;
+  return `<div class="bikes"><h3><span class="vb">Vélib'</span>Stations proches</h3>${state.bikes.slice(0, 5).map(b => `
+    <div class="bk ${b.open ? "" : "off"}"><span class="n">${esc(b.name)}</span><span class="d">${Math.round(b.dist)} m${b.open ? "" : " · station fermée"}</span>
+      <span class="c"><span class="${b.meca ? "" : "zero"}">${b.meca}<small>méca</small></span><span class="${b.elec ? "" : "zero"}">${b.elec}<small>élec</small></span><span class="${b.docks ? "" : "zero"}">${b.docks}<small>places</small></span></span></div>`).join("")}</div>`;
 }
 
 /* ---------- Rendu ---------- */
@@ -317,14 +415,14 @@ function stopHtml(s){
     const limit = state.open[s.id] ? 99 : 6;
     body = d.groups.slice(0, limit).map(g => `<div class="dep">
         <span class="badge ${g.mode}" style="--b:${g.color || "var(--muted)"};--t:${g.text || "#fff"}" aria-label="${MODE_LABEL[g.mode]} ${esc(g.code)}">${esc(g.code)}</span>
-        <span class="dir"><span class="to">${esc(g.to || "—")}</span><span class="mode">${MODE_LABEL[g.mode]}${g.network ? " · " + esc(g.network) : ""}</span></span>
+        <span class="dir"><span class="to">${esc(g.to || "—")}${g.alert ? '<span class="warn-dot" title="Perturbation en cours" aria-label="Perturbation en cours"></span>' : ""}</span><span class="mode">${MODE_LABEL[g.mode]}${g.network ? " · " + esc(g.network) : ""}</span></span>
         <span class="times">${g.times.slice(0, 2).map(timeHtml).join("")}</span>
       </div>`).join("")
       + (d.groups.length > 6 ? `<button class="more" data-toggle="${esc(s.id)}">${state.open[s.id] ? "Afficher moins" : `Afficher les ${d.groups.length - 6} autres lignes`}</button>` : "");
   }
   return `<section class="stop ${state.sel === s.id ? "sel" : ""}" id="stop-${esc(s.id)}">
     <button class="stop-h" data-sel="${esc(s.id)}"><span class="n">${esc(s.name)}</span><span class="d">${Math.round(s.dist)} m · ${walk} min à pied</span></button>
-    <div class="deps">${body}</div></section>`;
+    ${d && d.alerts ? alertsHtml(s.id, d.alerts) : ""}<div class="deps">${body}</div></section>`;
 }
 function errText(e){
   switch (e && e.kind){
@@ -361,7 +459,7 @@ function render(){
   }
   if (state.loading && !state.stops.length) html += `<div class="stop"><div class="stop-h"><span class="n">Recherche des arrêts…</span></div><div class="skel"></div><div class="skel"></div></div>`;
   else if (!state.stops.length && !state.err) html += `<div class="card"><h2>Aucun arrêt à moins de ${settings.radius} m</h2><p>Agrandissez la zone de recherche dans les réglages, ou choisissez un autre point.</p></div>`;
-  html += state.stops.map(stopHtml).join("");
+  html += state.stops.slice(0, 2).map(stopHtml).join("") + bikesHtml() + state.stops.slice(2).map(stopHtml).join("");
   if (state.stops.length) html += `<div class="legend"><span><i></i>Temps réel</span><span>Gris : horaire théorique</span><span>${callsToday()} / 1 000 appels aujourd'hui</span></div>`;
   L_.innerHTML = html;
 }
@@ -379,6 +477,7 @@ function openSettings(){
     <div class="field"><label for="sKey">Clé PRIM (jeton API)</label><input id="sKey" type="password" value="${esc(settings.key)}" placeholder="Collez votre clé ici" autocomplete="off" spellcheck="false">
       <span class="small">Elle reste sur ce téléphone et n'est envoyée qu'à Île-de-France Mobilités. <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">Obtenir une clé</a></span></div>
     <div class="field"><label for="sRadius">Zone de recherche</label><select id="sRadius">${[300,500,800,1200].map(r => `<option value="${r}" ${r === settings.radius ? "selected" : ""}>${r} m (${Math.round(r/80)} min à pied)</option>`).join("")}</select></div>
+    <div class="field"><label><input type="checkbox" id="sVelib" ${settings.velib ? "checked" : ""}> Afficher les stations Vélib' proches</label></div>
     <div class="field"><label>Transports affichés</label><div class="modes">${MODES.map(([k,l]) => `<label><input type="checkbox" value="${k}" ${settings.modes.includes(k) ? "checked" : ""}>${l}</label>`).join("")}</div></div>
     <div class="row"><button class="btn" id="setCancel">Annuler</button><button class="btn primary" id="setSave" style="margin-left:auto">Enregistrer</button></div>`;
   $("sheetWrap").hidden = false;
@@ -386,8 +485,9 @@ function openSettings(){
 function saveSettings(){
   const key = $("sKey").value.trim(), radius = +$("sRadius").value;
   const modes = [...$("sheet").querySelectorAll(".modes input:checked")].map(i => i.value);
-  const changed = key !== settings.key || radius !== settings.radius || modes.join() !== settings.modes.join();
-  Object.assign(settings, {key, radius, modes: modes.length ? modes : ["metro","rer","tram","bus"]});
+  const velib = $("sVelib").checked;
+  const changed = key !== settings.key || radius !== settings.radius || modes.join() !== settings.modes.join() || velib !== settings.velib;
+  Object.assign(settings, {key, radius, velib, modes: modes.length ? modes : ["metro","rer","tram","bus"]});
   store("dp:settings", settings);
   $("sheetWrap").hidden = true;
   if (changed){ state.err = null; if (state.place) setPlace(state.place); else render(); }
@@ -440,9 +540,10 @@ document.addEventListener("click", e => {
   if (t.id === "setBtn" || t.id === "openSet") return openSettings();
   if (t.id === "setCancel" || t.matches(".sheet-bg")){ $("sheetWrap").hidden = true; return; }
   if (t.id === "setSave") return saveSettings();
-  if (t.id === "refreshBtn"){ if (!state.stops.length) return loadStops(); const ids = [...new Set([...state.stops.slice(0, 6).map(s => s.id), ...Object.keys(state.deps)])]; return loadDeps(ids); }
+  if (t.id === "refreshBtn"){ if (!state.stops.length) return loadStops(); const ids = [...new Set([...state.stops.slice(0, 6).map(s => s.id), ...Object.keys(state.deps)])]; loadBikes(); return loadDeps(ids); }
   if (t.dataset.sel) return selectStop(t.dataset.sel, false);
   if (t.dataset.load) return selectStop(t.dataset.load, false);
+  if (t.dataset.alert){ state.alertOpen[t.dataset.alert] = !state.alertOpen[t.dataset.alert]; render(); return; }
   if (t.dataset.toggle){ state.open[t.dataset.toggle] = !state.open[t.dataset.toggle]; render(); }
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") $("sheetWrap").hidden = true; });
@@ -453,6 +554,7 @@ setInterval(() => {
   if (document.hidden || !state.stops.length || state.loading) return;
   const ids = Object.keys(state.deps).filter(id => state.deps[id].groups).slice(0, 6);
   if (ids.length) loadDeps(ids);
+  loadBikes();
 }, 90000);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && state.place && Date.now() - state.updated > 60000){
