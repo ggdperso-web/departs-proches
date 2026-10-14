@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Départs proches</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Départs proches">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#eef1f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1416" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Mise en page : carte en haut (40 % de l'écran), liste des arrêts en dessous classés par distance, chaque ligne sous forme de pastille colorée comme sur les quais. */
+:root{
+  --bg:#eef1f2; --surface:#ffffff; --fg:#14201f; --muted:#5d6b6c; --line:#d9dfe0;
+  --accent:#0b6e75; --accent-soft:#dcefef; --rt:#1a9c55; --warn:#c0571f; --chip:#e4e9ea;
+  --f-display:"Archivo","Arial Narrow",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Atkinson Hyperlegible",ui-sans-serif,system-ui,-apple-system,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1416; --surface:#182022; --fg:#e7eeee; --muted:#93a3a4; --line:#283336;
+  --accent:#5cc3c9; --accent-soft:#163236; --rt:#4cd38a; --warn:#f0965c; --chip:#212b2e; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1416; --surface:#182022; --fg:#e7eeee; --muted:#93a3a4; --line:#283336;
+  --accent:#5cc3c9; --accent-soft:#163236; --rt:#4cd38a; --warn:#f0965c; --chip:#212b2e; color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--fg);font:16px/1.4 var(--f-body);-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;display:flex;flex-direction:column}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+header{padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 10px;background:var(--bg);display:flex;flex-direction:column;gap:10px;z-index:1000}
+.top{display:flex;align-items:center;gap:10px}
+h1{font:800 22px/1 var(--f-display);font-stretch:85%;margin:0 auto 0 0;letter-spacing:.005em;display:flex;align-items:center;gap:8px}
+h1 .mark{width:22px;height:22px;border-radius:6px;background:var(--accent);display:grid;place-items:center;color:var(--surface);font-size:14px}
+.iconbtn{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:var(--chip);flex:none}
+.search{position:relative;display:flex;gap:8px}
+.search input{flex:1;min-width:0;font:inherit;padding:10px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface);color:var(--fg)}
+.search input:focus{border-color:var(--accent);outline:none}
+.sugg{position:absolute;top:calc(100% + 6px);left:0;right:48px;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 12px 30px rgb(0 0 0 / .18);z-index:1100}
+.sugg button{display:block;width:100%;text-align:left;padding:10px 14px;border-top:1px solid var(--line)}
+.sugg button:first-child{border-top:0}
+.sugg small{display:block;color:var(--muted);font-size:13px}
+
+#map{height:38vh;min-height:220px;max-height:420px;flex:none;background:var(--chip);z-index:1}
+.leaflet-container{font:inherit}
+.stop-pin{width:16px;height:16px;border-radius:50%;background:var(--surface);border:3px solid var(--accent);box-shadow:0 1px 4px rgb(0 0 0 / .3)}
+.stop-pin.sel{background:var(--accent);transform:scale(1.25)}
+.me-pin{width:18px;height:18px;border-radius:50%;background:#2f7bf6;border:3px solid #fff;box-shadow:0 0 0 6px rgb(47 123 246 / .25)}
+
+main{flex:1;padding:12px 16px calc(env(safe-area-inset-bottom,0px) + 32px);display:flex;flex-direction:column;gap:12px}
+.wrap{max-width:680px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.status{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;color:var(--muted)}
+.status .grow{margin-right:auto;min-width:0}
+.status b{color:var(--fg)}
+.refresh{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:99px;background:var(--chip);font-weight:700;font-size:14px;color:var(--fg)}
+.refresh.spin svg{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.stop{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;scroll-margin-top:12px}
+.stop.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.stop-h{display:flex;align-items:baseline;gap:10px;padding:12px 14px 8px;width:100%;text-align:left}
+.stop-h .n{font:700 18px/1.2 var(--f-display);font-stretch:90%;margin-right:auto;min-width:0;overflow-wrap:anywhere}
+.stop-h .d{font-size:13px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.deps{display:flex;flex-direction:column}
+.dep{display:grid;grid-template-columns:46px 1fr auto;align-items:center;gap:10px;padding:9px 14px;border-top:1px solid var(--line)}
+.badge{min-width:34px;height:28px;padding:0 7px;border-radius:7px;display:inline-grid;place-items:center;font:800 15px/1 var(--f-display);font-stretch:90%;background:var(--b,#666);color:var(--t,#fff);white-space:nowrap}
+.badge.metro{border-radius:50%;min-width:30px;width:30px;height:30px;padding:0}
+.badge.rer{border-radius:8px}
+.badge.tram{border-radius:5px;box-shadow:inset 0 3px 0 rgb(0 0 0 / .18), inset 0 -3px 0 rgb(0 0 0 / .18)}
+.dir{min-width:0;display:flex;flex-direction:column}
+.dir .to{font-weight:700;overflow-wrap:anywhere}
+.dir .mode{font-size:12px;color:var(--muted)}
+.times{display:flex;gap:10px;align-items:baseline;font-variant-numeric:tabular-nums;white-space:nowrap}
+.times .t{font:700 17px var(--f-display);font-stretch:90%;text-align:right}
+.times .t small{font:500 12px var(--f-body);color:var(--muted);margin-left:1px}
+.times .t.rt{color:var(--rt)}
+.times .t.next{color:var(--muted);font-size:15px}
+.times .t.now{color:var(--warn)}
+.legend{font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--rt);margin-right:4px}
+.more{width:100%;padding:9px 14px;border-top:1px solid var(--line);color:var(--accent);font-weight:700;font-size:14px;text-align:left}
+.empty-deps{padding:10px 14px 14px;color:var(--muted);font-size:14px;border-top:1px solid var(--line)}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.card h2{font:800 20px var(--f-display);font-stretch:90%;margin:0}
+.card p{margin:0;color:var(--muted);max-width:62ch}
+.card ol{margin:0;padding-left:20px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.card.err{border-color:var(--warn)}
+.card a{color:var(--accent);font-weight:700}
+.btn{padding:10px 14px;border-radius:10px;background:var(--chip);font-weight:700;font-size:15px;display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:var(--accent);color:var(--surface)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:13px;font-weight:700;color:var(--muted)}
+.field input,.field select{font:inherit;padding:10px 12px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);color:var(--fg);min-width:0}
+.modes{display:flex;flex-wrap:wrap;gap:6px}
+.modes label{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:99px;background:var(--chip);font-size:14px;font-weight:700;cursor:pointer}
+.small{font-size:13px;color:var(--muted)}
+
+.sheet-bg{position:fixed;inset:0;background:rgb(0 0 0 / .4);z-index:2000}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:2001;background:var(--surface);border-radius:18px 18px 0 0;padding:18px 16px calc(env(safe-area-inset-bottom,0px) + 20px);max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:14px;max-height:90vh;overflow:auto}
+.sheet h2{font:800 22px var(--f-display);font-stretch:90%;margin:0}
+.skel{height:44px;margin:0 14px 10px;border-radius:8px;background:linear-gradient(90deg,var(--chip),var(--line),var(--chip));background-size:200% 100%;animation:sk 1.2s infinite}
+@keyframes sk{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.skel,.refresh.spin svg{animation:none}}
+@media (min-width:900px){
+  body{flex-direction:row;flex-wrap:wrap}
+  header{width:100%}
+  #map{height:auto;max-height:none;width:55%;min-height:calc(100vh - 120px)}
+  main{width:45%;max-height:calc(100vh - 120px);overflow:auto}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <h1><span class="mark" aria-hidden="true">↗</span>Départs proches</h1>
+    <button class="iconbtn" id="locBtn" aria-label="Me localiser" title="Me localiser">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    </button>
+    <button class="iconbtn" id="setBtn" aria-label="Réglages" title="Réglages">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+    </button>
+  </div>
+  <form class="search" id="searchForm" autocomplete="off">
+    <input id="q" type="search" placeholder="Une adresse, une gare, un lieu…" aria-label="Chercher une adresse" enterkeyhint="search">
+    <div class="sugg" id="sugg" hidden></div>
+  </form>
+</header>
+<div id="map" role="region" aria-label="Carte des arrêts"></div>
+<main><div class="wrap" id="list"></div></main>
+
+<div id="sheetWrap" hidden><div class="sheet-bg" id="sheetBg"></div><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="setTitle" id="sheet"></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function(){
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function store(k, v){ try{ if (v === undefined) return JSON.parse(localStorage.getItem(k)); localStorage.setItem(k, JSON.stringify(v)); }catch(e){ return null; } }
+
+const API = "https://prim.iledefrance-mobilites.fr/marketplace/v2/navitia";
+const GEOCODE = "https://data.geopf.fr/geocodage/search";
+const MODES = [
+  ["metro", "Métro"], ["rer", "RER & trains"], ["tram", "Tramway"], ["bus", "Bus"]
+];
+const settings = Object.assign({key: "", radius: 500, modes: ["metro","rer","tram","bus"]}, store("dp:settings") || {});
+const state = {place: store("dp:place") || null, stops: [], deps: {}, open: {}, sel: null, loading: false, err: null, updated: 0};
+
+/* ---------- Quota : 1 000 appels par jour sur un compte PRIM gratuit ---------- */
+function countCall(){
+  const today = new Date().toISOString().slice(0,10);
+  const q = store("dp:quota") || {};
+  const n = (q.day === today ? q.n : 0) + 1;
+  store("dp:quota", {day: today, n});
+  return n;
+}
+function callsToday(){ const q = store("dp:quota") || {}; return q.day === new Date().toISOString().slice(0,10) ? q.n : 0; }
+
+class ApiError extends Error{ constructor(kind, msg){ super(msg); this.kind = kind; } }
+async function prim(path){
+  if (!settings.key) throw new ApiError("nokey", "Clé manquante");
+  if (callsToday() >= 980) throw new ApiError("quota", "Quota du jour presque atteint");
+  countCall();
+  let r;
+  try{ r = await fetch(API + path, {headers: {apikey: settings.key, Accept: "application/json"}}); }
+  catch(e){ throw new ApiError("network", e.message); }
+  if (r.status === 401 || r.status === 403) throw new ApiError("auth", "Clé refusée");
+  if (r.status === 429) throw new ApiError("quota", "Trop d'appels");
+  if (!r.ok){
+    let j = null; try{ j = await r.json(); }catch(e){}
+    if (j && j.error && /no_solution|unknown_object|date_out_of_bounds/.test(j.error.id || "")) return j;
+    throw new ApiError("server", "HTTP " + r.status);
+  }
+  return r.json();
+}
+
+/* ---------- Classement des modes ---------- */
+function modeOf(di){
+  const m = ((di.physical_mode || "") + " " + (di.commercial_mode || "")).toLowerCase();
+  if (/m[ée]tro/.test(m)) return "metro";
+  if (/rer|train|transilien|ter|rapid/.test(m)) return "rer";
+  if (/tram/.test(m)) return "tram";
+  return "bus";
+}
+const MODE_ORDER = {metro:0, rer:1, tram:2, bus:3};
+const MODE_LABEL = {metro:"Métro", rer:"RER / Train", tram:"Tramway", bus:"Bus"};
+function parseNav(s){ // "20261014T081500" (heure de Paris)
+  return new Date(+s.slice(0,4), +s.slice(4,6) - 1, +s.slice(6,8), +s.slice(9,11), +s.slice(11,13), +s.slice(13,15) || 0);
+}
+const hex = c => /^[0-9a-f]{6}$/i.test(c || "") ? "#" + c : null;
+
+/* ---------- Carte ---------- */
+const dark = () => { const t = document.documentElement.getAttribute("data-theme"); return t ? t === "dark" : matchMedia("(prefers-color-scheme: dark)").matches; };
+let map = null, tiles = null, stopLayer = null, meMarker = null, radiusCircle = null;
+function initMap(){
+  if (!window.L){ $("map").hidden = true; return; }
+  map = L.map("map", {zoomControl: false, attributionControl: true}).setView([48.8566, 2.3522], 13);
+  L.control.zoom({position: "bottomright"}).addTo(map);
+  setTiles();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", setTiles);
+  stopLayer = L.layerGroup().addTo(map);
+  map.on("click", e => { setPlace({lat: e.latlng.lat, lon: e.latlng.lng, label: "Point choisi sur la carte"}); });
+}
+function setTiles(){
+  if (!map) return;
+  if (tiles) map.removeLayer(tiles);
+  tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark() ? "dark_all" : "rastertiles/voyager"}/{z}/{x}/{y}{r}.png`, {
+    maxZoom: 19, subdomains: "abcd",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+  }).addTo(map);
+}
+function drawMap(){
+  if (!map || !state.place) return;
+  const p = [state.place.lat, state.place.lon];
+  if (meMarker) map.removeLayer(meMarker);
+  if (radiusCircle) map.removeLayer(radiusCircle);
+  meMarker = L.marker(p, {icon: L.divIcon({className: "", html: '<div class="me-pin"></div>', iconSize: [18,18], iconAnchor: [9,9]}), keyboard: false}).addTo(map);
+  radiusCircle = L.circle(p, {radius: settings.radius, color: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0b6e75", weight: 1, fillOpacity: .05, interactive: false}).addTo(map);
+  stopLayer.clearLayers();
+  for (const s of state.stops){
+    const m = L.marker([s.lat, s.lon], {icon: L.divIcon({className: "", html: `<div class="stop-pin ${state.sel === s.id ? "sel" : ""}"></div>`, iconSize: [16,16], iconAnchor: [8,8]}), title: s.name});
+    m.on("click", ev => { L.DomEvent.stopPropagation(ev); selectStop(s.id, true); });
+    stopLayer.addLayer(m);
+  }
+}
+function fitMap(){
+  if (!map || !state.place) return;
+  const pts = [[state.place.lat, state.place.lon], ...state.stops.map(s => [s.lat, s.lon])];
+  if (pts.length > 1) map.fitBounds(pts, {padding: [28, 28], maxZoom: 17});
+  else map.setView(pts[0], 16);
+}
+
+/* ---------- Chargement ---------- */
+async function setPlace(place){
+  state.place = place; store("dp:place", place);
+  state.stops = []; state.deps = {}; state.sel = null; state.err = null;
+  drawMap(); render();
+  await loadStops();
+}
+async function loadStops(){
+  if (!state.place) return;
+  state.loading = true; state.err = null; render();
+  try{
+    const j = await prim(`/coord/${state.place.lon.toFixed(6)};${state.place.lat.toFixed(6)}/places_nearby?type[]=stop_area&distance=${settings.radius}&count=25&depth=1`);
+    const list = (j.places_nearby || []).filter(p => p.embedded_type === "stop_area" && p.stop_area);
+    state.stops = list.map(p => ({id: p.id, name: p.stop_area.name || p.name, lat: +p.stop_area.coord.lat, lon: +p.stop_area.coord.lon, dist: +p.distance || 0}))
+                      .sort((a,b) => a.dist - b.dist);
+    drawMap(); fitMap();
+    await loadDeps(state.stops.slice(0, 6).map(s => s.id));
+  }catch(e){ state.err = e; }
+  state.loading = false; render();
+}
+async function loadDeps(ids){
+  await Promise.all(ids.map(async id => {
+    state.deps[id] = state.deps[id] || {loading: true};
+    state.deps[id].loading = true; render();
+    try{
+      const j = await prim(`/stop_areas/${encodeURIComponent(id)}/departures?count=40&duration=7200&data_freshness=realtime&depth=1`);
+      state.deps[id] = {loading: false, groups: groupDeps(j.departures || []), at: Date.now()};
+    }catch(e){
+      state.deps[id] = {loading: false, error: e};
+      if (e.kind === "auth" || e.kind === "quota" || e.kind === "network") state.err = e;
+    }
+  }));
+  state.updated = Date.now();
+  render();
+}
+function groupDeps(deps){
+  const g = new Map(), now = Date.now();
+  for (const d of deps){
+    const di = d.display_informations || {}, sdt = d.stop_date_time || {};
+    const when = parseNav(sdt.departure_date_time || sdt.arrival_date_time || "");
+    if (isNaN(when) || when - now < -60000) continue;
+    const mode = modeOf(di);
+    if (!settings.modes.includes(mode)) continue;
+    const to = di.direction || di.headsign || (d.route && d.route.direction && d.route.direction.name) || "";
+    const key = (di.code || di.label) + "|" + to;
+    if (!g.has(key)) g.set(key, {code: di.code || di.label || "?", to: to.replace(/\s*\([^)]*\)\s*$/, ""), mode, network: di.network || "", color: hex(di.color), text: hex(di.text_color), times: []});
+    g.get(key).times.push({at: when, rt: sdt.data_freshness === "realtime"});
+  }
+  return [...g.values()].map(x => (x.times.sort((a,b) => a.at - b.at), x))
+    .sort((a,b) => MODE_ORDER[a.mode] - MODE_ORDER[b.mode] || a.code.localeCompare(b.code, "fr", {numeric: true}) || a.times[0].at - b.times[0].at);
+}
+
+/* ---------- Rendu ---------- */
+function minutes(t){ return Math.round((t - Date.now()) / 60000); }
+function timeHtml(t, i){
+  const m = minutes(t.at);
+  const cls = ["t", t.rt ? "rt" : "", i > 0 ? "next" : "", m <= 0 ? "now" : ""].join(" ");
+  const txt = m <= 0 ? "À quai" : m < 60 ? `${m}<small>min</small>` : t.at.toTimeString().slice(0,5).replace(":", "h");
+  return `<span class="${cls}" title="${t.rt ? "Temps réel" : "Horaire théorique"}">${txt}</span>`;
+}
+function stopHtml(s){
+  const d = state.deps[s.id];
+  const walk = Math.max(1, Math.round(s.dist / 80));
+  let body = "";
+  if (!d) body = `<button class="more" data-load="${esc(s.id)}">Voir les prochains passages</button>`;
+  else if (d.loading && !d.groups) body = `<div class="skel"></div><div class="skel"></div>`;
+  else if (d.error) body = `<div class="empty-deps">${esc(errText(d.error).short)}</div>`;
+  else if (!d.groups.length) body = `<div class="empty-deps">Aucun passage dans les 2 prochaines heures${settings.modes.length < 4 ? " pour les modes choisis" : ""}.</div>`;
+  else {
+    const limit = state.open[s.id] ? 99 : 6;
+    body = d.groups.slice(0, limit).map(g => `<div class="dep">
+        <span class="badge ${g.mode}" style="--b:${g.color || "var(--muted)"};--t:${g.text || "#fff"}" aria-label="${MODE_LABEL[g.mode]} ${esc(g.code)}">${esc(g.code)}</span>
+        <span class="dir"><span class="to">${esc(g.to || "—")}</span><span class="mode">${MODE_LABEL[g.mode]}${g.network ? " · " + esc(g.network) : ""}</span></span>
+        <span class="times">${g.times.slice(0, 2).map(timeHtml).join("")}</span>
+      </div>`).join("")
+      + (d.groups.length > 6 ? `<button class="more" data-toggle="${esc(s.id)}">${state.open[s.id] ? "Afficher moins" : `Afficher les ${d.groups.length - 6} autres lignes`}</button>` : "");
+  }
+  return `<section class="stop ${state.sel === s.id ? "sel" : ""}" id="stop-${esc(s.id)}">
+    <button class="stop-h" data-sel="${esc(s.id)}"><span class="n">${esc(s.name)}</span><span class="d">${Math.round(s.dist)} m · ${walk} min à pied</span></button>
+    <div class="deps">${body}</div></section>`;
+}
+function errText(e){
+  switch (e && e.kind){
+    case "nokey": return {short: "Ajoutez votre clé PRIM dans les réglages.", long: ""};
+    case "auth": return {short: "Clé PRIM refusée.", long: "Vérifiez la clé dans les réglages : copiez-la à nouveau depuis votre compte PRIM, sans espace. Vérifiez aussi que vous êtes bien abonné à l'API « Calculateur Île-de-France Mobilités – Accès générique (v2) »."};
+    case "quota": return {short: "Quota du jour atteint.", long: "Le compte PRIM gratuit permet 1 000 appels par jour. L'appli reprendra demain, ou vous pouvez demander une hausse du quota sur votre compte PRIM."};
+    case "network": return {short: "Le service des transports n'a pas répondu.", long: "Vérifiez votre connexion internet. Si le problème continue alors que la connexion fonctionne, le service bloque peut-être les appels depuis un site web : prévenez Claude, il ajoutera un petit relais."};
+    default: return {short: "Le service des transports a renvoyé une erreur. Réessayez dans un instant.", long: ""};
+  }
+}
+function render(){
+  const L_ = $("list");
+  if (!settings.key){
+    L_.innerHTML = `<div class="card"><h2>Une clé gratuite à ajouter</h2>
+      <p>Les horaires viennent de PRIM, le service officiel d'Île-de-France Mobilités. Il faut une clé personnelle, gratuite, à créer une seule fois.</p>
+      <ol><li>Créez un compte sur <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">prim.iledefrance-mobilites.fr</a>.</li>
+      <li>Dans le catalogue, abonnez-vous à « Calculateur Île-de-France Mobilités – Accès générique (v2) ».</li>
+      <li>Copiez votre clé (jeton API) et collez-la dans les réglages.</li></ol>
+      <div class="row"><button class="btn primary" id="openSet">Ajouter ma clé</button></div></div>`;
+    return;
+  }
+  if (!state.place){
+    L_.innerHTML = `<div class="card"><h2>Où êtes-vous ?</h2><p>Touchez le bouton de position en haut, tapez une adresse, ou touchez un point de la carte. Les arrêts à moins de ${settings.radius} m et leurs prochains passages s'afficheront ici.</p>
+      <div class="row"><button class="btn primary" id="locBtn2">Me localiser</button></div></div>`;
+    return;
+  }
+  let html = "";
+  const ago = state.updated ? Math.round((Date.now() - state.updated) / 1000) : null;
+  html += `<div class="status"><span class="grow"><b>${esc(state.place.label || "Ma position")}</b>${state.stops.length ? ` · ${state.stops.length} arrêt${state.stops.length > 1 ? "s" : ""}` : ""}${ago !== null ? ` · mis à jour ${ago < 60 ? "à l'instant" : `il y a ${Math.round(ago/60)} min`}` : ""}</span>
+    <button class="refresh ${state.loading ? "spin" : ""}" id="refreshBtn" aria-label="Actualiser"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>Actualiser</button></div>`;
+  if (state.err){
+    const t = errText(state.err);
+    html += `<div class="card err"><h2>${esc(t.short)}</h2>${t.long ? `<p>${esc(t.long)}</p>` : ""}${state.err.kind === "auth" || state.err.kind === "nokey" ? `<div class="row"><button class="btn primary" id="openSet">Ouvrir les réglages</button></div>` : ""}</div>`;
+  }
+  if (state.loading && !state.stops.length) html += `<div class="stop"><div class="stop-h"><span class="n">Recherche des arrêts…</span></div><div class="skel"></div><div class="skel"></div></div>`;
+  else if (!state.stops.length && !state.err) html += `<div class="card"><h2>Aucun arrêt à moins de ${settings.radius} m</h2><p>Agrandissez la zone de recherche dans les réglages, ou choisissez un autre point.</p></div>`;
+  html += state.stops.map(stopHtml).join("");
+  if (state.stops.length) html += `<div class="legend"><span><i></i>Temps réel</span><span>Gris : horaire théorique</span><span>${callsToday()} / 1 000 appels aujourd'hui</span></div>`;
+  L_.innerHTML = html;
+}
+function selectStop(id, fromMap){
+  state.sel = id; drawMap(); render();
+  if (!state.deps[id]) loadDeps([id]);
+  const el = document.getElementById("stop-" + id);
+  if (fromMap && el) el.scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start"});
+  if (!fromMap && map){ const s = state.stops.find(x => x.id === id); if (s) map.panTo([s.lat, s.lon]); }
+}
+
+/* ---------- Réglages ---------- */
+function openSettings(){
+  $("sheet").innerHTML = `<h2 id="setTitle">Réglages</h2>
+    <div class="field"><label for="sKey">Clé PRIM (jeton API)</label><input id="sKey" type="password" value="${esc(settings.key)}" placeholder="Collez votre clé ici" autocomplete="off" spellcheck="false">
+      <span class="small">Elle reste sur ce téléphone et n'est envoyée qu'à Île-de-France Mobilités. <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">Obtenir une clé</a></span></div>
+    <div class="field"><label for="sRadius">Zone de recherche</label><select id="sRadius">${[300,500,800,1200].map(r => `<option value="${r}" ${r === settings.radius ? "selected" : ""}>${r} m (${Math.round(r/80)} min à pied)</option>`).join("")}</select></div>
+    <div class="field"><label>Transports affichés</label><div class="modes">${MODES.map(([k,l]) => `<label><input type="checkbox" value="${k}" ${settings.modes.includes(k) ? "checked" : ""}>${l}</label>`).join("")}</div></div>
+    <div class="row"><button class="btn" id="setCancel">Annuler</button><button class="btn primary" id="setSave" style="margin-left:auto">Enregistrer</button></div>`;
+  $("sheetWrap").hidden = false;
+}
+function saveSettings(){
+  const key = $("sKey").value.trim(), radius = +$("sRadius").value;
+  const modes = [...$("sheet").querySelectorAll(".modes input:checked")].map(i => i.value);
+  const changed = key !== settings.key || radius !== settings.radius || modes.join() !== settings.modes.join();
+  Object.assign(settings, {key, radius, modes: modes.length ? modes : ["metro","rer","tram","bus"]});
+  store("dp:settings", settings);
+  $("sheetWrap").hidden = true;
+  if (changed){ state.err = null; if (state.place) setPlace(state.place); else render(); }
+}
+
+/* ---------- Position et adresse ---------- */
+function locate(silent, fallback){
+  if (!navigator.geolocation){ if (fallback) fallback(); if (!silent) alertCard("Ce navigateur ne donne pas la position. Tapez une adresse à la place."); return; }
+  navigator.geolocation.getCurrentPosition(
+    pos => setPlace({lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Ma position", gps: true}),
+    () => { if (fallback) fallback(); if (!silent) alertCard("Position non disponible. Autorisez la localisation pour ce site dans les réglages de l'iPhone, ou tapez une adresse."); },
+    {enableHighAccuracy: true, timeout: 10000, maximumAge: 60000}
+  );
+}
+function alertCard(msg){ state.err = {kind: "custom"}; $("list").insertAdjacentHTML("afterbegin", `<div class="card err"><p>${esc(msg)}</p></div>`); }
+let gt, gctrl;
+$("q").addEventListener("input", e => {
+  clearTimeout(gt);
+  const q = e.target.value.trim();
+  if (q.length < 3){ $("sugg").hidden = true; return; }
+  gt = setTimeout(async () => {
+    gctrl?.abort(); gctrl = new AbortController();
+    try{
+      const near = state.place ? `&lat=${state.place.lat}&lon=${state.place.lon}` : "&lat=48.8566&lon=2.3522";
+      const r = await fetch(`${GEOCODE}?q=${encodeURIComponent(q)}&limit=6&index=address,poi${near}`, {signal: gctrl.signal});
+      const j = await r.json();
+      const f = (j.features || []).filter(x => x.geometry && x.geometry.coordinates);
+      $("sugg").innerHTML = f.length ? f.map((x,i) => {
+        const p = x.properties || {};
+        const name = p.label || p.name || (Array.isArray(p.toponym) ? p.toponym[0] : p.toponym) || "Lieu";
+        const sub = [p.postcode, p.city || p.municipality].filter(Boolean).join(" ");
+        return `<button type="button" data-g="${i}">${esc(name)}${sub && !name.includes(sub) ? `<small>${esc(sub)}</small>` : ""}</button>`;
+      }).join("") : `<button type="button" disabled>Aucun lieu trouvé</button>`;
+      $("sugg").hidden = false;
+      $("sugg").querySelectorAll("[data-g]").forEach(b => b.onclick = () => {
+        const x = f[+b.dataset.g], [lon, lat] = x.geometry.coordinates;
+        $("sugg").hidden = true; $("q").value = ""; $("q").blur();
+        setPlace({lat, lon, label: (x.properties.label || x.properties.name || "Adresse").replace(/\s+\d{5}.*$/, "")});
+      });
+    }catch(err){ if (err.name !== "AbortError") $("sugg").hidden = true; }
+  }, 250);
+});
+$("searchForm").addEventListener("submit", e => { e.preventDefault(); $("sugg").querySelector("[data-g]")?.click(); });
+
+/* ---------- Événements ---------- */
+document.addEventListener("click", e => {
+  if (!e.target.closest(".search")) $("sugg").hidden = true;
+  const t = e.target.closest("button, .sheet-bg"); if (!t) return;
+  if (t.id === "locBtn" || t.id === "locBtn2") return locate(false);
+  if (t.id === "setBtn" || t.id === "openSet") return openSettings();
+  if (t.id === "setCancel" || t.matches(".sheet-bg")){ $("sheetWrap").hidden = true; return; }
+  if (t.id === "setSave") return saveSettings();
+  if (t.id === "refreshBtn"){ if (!state.stops.length) return loadStops(); const ids = [...new Set([...state.stops.slice(0, 6).map(s => s.id), ...Object.keys(state.deps)])]; return loadDeps(ids); }
+  if (t.dataset.sel) return selectStop(t.dataset.sel, false);
+  if (t.dataset.load) return selectStop(t.dataset.load, false);
+  if (t.dataset.toggle){ state.open[t.dataset.toggle] = !state.open[t.dataset.toggle]; render(); }
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("sheetWrap").hidden = true; });
+
+/* Actualisation : l'affichage des minutes chaque 20 s, les données chaque 90 s si l'appli est ouverte */
+setInterval(() => { if (!document.hidden && state.stops.length) render(); }, 20000);
+setInterval(() => {
+  if (document.hidden || !state.stops.length || state.loading) return;
+  const ids = Object.keys(state.deps).filter(id => state.deps[id].groups).slice(0, 6);
+  if (ids.length) loadDeps(ids);
+}, 90000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.place && Date.now() - state.updated > 60000){
+    if (state.place.gps) locate(true, loadStops); else loadStops();
+  }
+});
+
+/* ---------- Démarrage ---------- */
+initMap();
+render();
+if (settings.key){
+  if (state.place){ drawMap(); if (state.place.gps) locate(true, loadStops); else loadStops(); }
+  else locate(true);
+}
+})();
+</script>
+</body>
+</html>
