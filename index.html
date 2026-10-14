@@ -54,6 +54,7 @@ h1 .mark{width:22px;height:22px;border-radius:6px;background:var(--accent);displ
 
 #map{height:38vh;min-height:220px;max-height:420px;flex:none;background:var(--chip);z-index:1}
 .leaflet-container{font:inherit}
+.darkmap .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6)}
 .stop-pin{width:16px;height:16px;border-radius:50%;background:var(--surface);border:3px solid var(--accent);box-shadow:0 1px 4px rgb(0 0 0 / .3)}
 .stop-pin.sel{background:var(--accent);transform:scale(1.25)}
 .me-pin{width:18px;height:18px;border-radius:50%;background:#2f7bf6;border:3px solid #fff;box-shadow:0 0 0 6px rgb(47 123 246 / .25)}
@@ -216,10 +217,12 @@ function initMap(){
 function setTiles(){
   if (!map) return;
   if (tiles) map.removeLayer(tiles);
-  tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark() ? "dark_all" : "rastertiles/voyager"}/{z}/{x}/{y}{r}.png`, {
-    maxZoom: 19, subdomains: "abcd",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+  // Plan IGN (Géoplateforme, service public, sans clé). En mode sombre, les tuiles sont inversées en CSS.
+  tiles = L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}", {
+    maxZoom: 20, maxNativeZoom: 19,
+    attribution: '&copy; <a href="https://www.ign.fr/">IGN</a> – Géoplateforme'
   }).addTo(map);
+  document.getElementById("map").classList.toggle("darkmap", dark());
 }
 function drawMap(){
   if (!map || !state.place) return;
