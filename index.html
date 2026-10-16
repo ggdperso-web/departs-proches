@@ -140,6 +140,24 @@ main{flex:1;padding:12px 16px calc(env(safe-area-inset-bottom,0px) + 32px);displ
   #map{height:auto;max-height:none;width:55%;min-height:calc(100vh - 120px)}
   main{width:45%;max-height:calc(100vh - 120px);overflow:auto}
 }
+
+.seg{display:flex;gap:4px;background:var(--chip);border-radius:12px;padding:3px}
+.seg button{flex:1;padding:9px 0;border-radius:9px;font:700 15px var(--f-display);font-stretch:88%;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:6px}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px rgb(0 0 0 / .12)}
+.wifi{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.wifi.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.wifi-h{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;padding:12px 14px}
+.wifi-h .wic{font-size:21px;text-align:center;line-height:1}
+.winfo{min-width:0;display:flex;flex-direction:column;gap:1px}
+.winfo .n{font:700 17px/1.2 var(--f-display);font-stretch:92%;overflow-wrap:anywhere}
+.winfo .d{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.fee{font:700 12px var(--f-body);padding:4px 9px;border-radius:99px;white-space:nowrap}
+.fee.free{background:color-mix(in srgb,var(--rt) 16%,transparent);color:var(--rt)}
+.fee.cust,.fee.paid{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.fee.unk{background:var(--chip);color:var(--muted)}
+.wpin{width:16px;height:16px;border-radius:50%;background:var(--accent);border:2px solid #fff;box-shadow:0 1px 4px rgb(0 0 0 / .35)}
+.wpin.paris{background:var(--rt)}
+.wpin.sel{transform:scale(1.3)}
 </style>
 </head>
 <body>
@@ -157,6 +175,10 @@ main{flex:1;padding:12px 16px calc(env(safe-area-inset-bottom,0px) + 32px);displ
     <input id="q" type="search" placeholder="Une adresse, une gare, un lieu…" aria-label="Chercher une adresse" enterkeyhint="search">
     <div class="sugg" id="sugg" hidden></div>
   </form>
+  <div class="seg" role="group" aria-label="Type de recherche">
+    <button type="button" data-mode="transport" aria-pressed="true">🚌 Transports</button>
+    <button type="button" data-mode="wifi" aria-pressed="false">📶 Wifi</button>
+  </div>
 </header>
 <div id="map" role="region" aria-label="Carte des arrêts"></div>
 <main><div class="wrap" id="list"></div></main>
@@ -175,8 +197,46 @@ const GEOCODE = "https://data.geopf.fr/geocodage/search";
 const MODES = [
   ["metro", "Métro"], ["rer", "RER & trains"], ["tram", "Tramway"], ["bus", "Bus"]
 ];
-const settings = Object.assign({key: "", radius: 500, modes: ["metro","rer","tram","bus"], velib: true}, store("dp:settings") || {});
-const state = {place: store("dp:place") || null, stops: [], deps: {}, bikes: null, alertOpen: {}, open: {}, sel: null, loading: false, err: null, updated: 0};
+const settings = Object.assign({key: "", radius: 500, modes: ["metro","rer","tram","bus"], velib: true, mode: "transport"}, store("dp:settings") || {});
+const state = {place: store("dp:place") || null, stops: [], deps: {}, bikes: null, wifi: null, wifiLoading: false, alertOpen: {}, open: {}, sel: null, loading: false, err: null, updated: 0};
+
+/* ---------- Wifi : OpenStreetMap (Overpass) + bornes Paris Wi-Fi ---------- */
+const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
+const PARISWIFI = "https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/sites-disposant-du-service-paris-wi-fi/records";
+const WIFI_CATS = {
+  cafe:["Café","☕"], bar:["Bar","🍸"], pub:["Pub","🍺"], biergarten:["Bar","🍺"],
+  restaurant:["Restaurant","🍽️"], fast_food:["Restauration rapide","🍔"], food_court:["Restauration","🍽️"],
+  bakery:["Boulangerie","🥐"], ice_cream:["Glacier","🍦"], cafe_bar:["Café-bar","☕"],
+  library:["Bibliothèque","📚"], museum:["Musée","🖼️"], townhall:["Mairie","🏛️"], community_centre:["Centre social","🏛️"],
+  coworking_space:["Coworking","💻"], hotel:["Hôtel","🏨"], hostel:["Auberge","🛏️"], guest_house:["Chambre d'hôtes","🛏️"],
+  fuel:["Station-service","⛽"], marketplace:["Marché","🧺"], cinema:["Cinéma","🎬"], theatre:["Théâtre","🎭"],
+  fitness_centre:["Salle de sport","🏋️"], mall:["Centre commercial","🛍️"], supermarket:["Supermarché","🛒"], convenience:["Épicerie","🛒"],
+  bank:["Banque","🏦"], hospital:["Hôpital","🏥"], university:["Université","🎓"], college:["École","🎓"], school:["École","🎓"],
+  parking:["Parking","🅿️"], park:["Parc","🌳"], fireplace:["Lieu public","📶"],
+  paris:["Borne Paris Wi-Fi","📶"], other:["Lieu avec wifi","📶"]
+};
+async function overpass(query){
+  let lastErr;
+  for (const ep of OVERPASS){
+    try{
+      const r = await fetch(ep, {method: "POST", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: "data=" + encodeURIComponent(query)});
+      if (r.status === 429 || r.status === 504){ lastErr = new Error("busy"); continue; }
+      if (!r.ok){ lastErr = new Error("http" + r.status); continue; }
+      return await r.json();
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error("overpass");
+}
+function catOf(t){ for (const k of ["amenity","tourism","shop","leisure","office"]) if (t[k]) return t[k]; return "other"; }
+function feeOf(t, cat){
+  const f = (t["internet_access:fee"] || t.fee || "").toLowerCase();
+  if (f === "no" || f === "free") return ["Gratuit", "free"];
+  if (f === "yes") return ["Payant", "paid"];
+  if (f === "customers" || f === "customer") return ["Pour les clients", "cust"];
+  if (["library","townhall","community_centre","museum","public_building","marketplace","park"].includes(cat)) return ["Public", "free"];
+  if (["cafe","bar","pub","restaurant","fast_food","bakery","biergarten","ice_cream"].includes(cat)) return ["Souvent pour les clients", "cust"];
+  return ["Accès à vérifier", "unk"];
+}
 
 /* ---------- Quota : 1 000 appels par jour sur un compte PRIM gratuit ---------- */
 function countCall(){
@@ -223,7 +283,7 @@ const hex = c => /^[0-9a-f]{6}$/i.test(c || "") ? "#" + c : null;
 
 /* ---------- Carte ---------- */
 const dark = () => { const t = document.documentElement.getAttribute("data-theme"); return t ? t === "dark" : matchMedia("(prefers-color-scheme: dark)").matches; };
-let map = null, tiles = null, stopLayer = null, meMarker = null, radiusCircle = null;
+let map = null, tiles = null, stopLayer = null, wifiLayer = null, meMarker = null, radiusCircle = null;
 function initMap(){
   if (!window.L){ $("map").hidden = true; return; }
   map = L.map("map", {zoomControl: false, attributionControl: true}).setView([48.8566, 2.3522], 13);
@@ -231,6 +291,7 @@ function initMap(){
   setTiles();
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", setTiles);
   stopLayer = L.layerGroup().addTo(map);
+  wifiLayer = L.layerGroup().addTo(map);
   map.on("click", e => { setPlace({lat: e.latlng.lat, lon: e.latlng.lng, label: "Point choisi sur la carte"}); });
 }
 function setTiles(){
@@ -251,15 +312,26 @@ function drawMap(){
   meMarker = L.marker(p, {icon: L.divIcon({className: "", html: '<div class="me-pin"></div>', iconSize: [18,18], iconAnchor: [9,9]}), keyboard: false}).addTo(map);
   radiusCircle = L.circle(p, {radius: settings.radius, color: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0b6e75", weight: 1, fillOpacity: .05, interactive: false}).addTo(map);
   stopLayer.clearLayers();
+  if (wifiLayer) wifiLayer.clearLayers();
+  if (settings.mode === "wifi"){ drawWifiMarkers(); return; }
   for (const s of state.stops){
     const m = L.marker([s.lat, s.lon], {icon: L.divIcon({className: "", html: `<div class="stop-pin ${state.sel === s.id ? "sel" : ""}"></div>`, iconSize: [16,16], iconAnchor: [8,8]}), title: s.name});
     m.on("click", ev => { L.DomEvent.stopPropagation(ev); selectStop(s.id, true); });
     stopLayer.addLayer(m);
   }
 }
+function drawWifiMarkers(){
+  if (!Array.isArray(state.wifi)) return;
+  for (const w of state.wifi){
+    const m = L.marker([w.lat, w.lon], {icon: L.divIcon({className: "", html: `<div class="wpin ${w.src === "paris" ? "paris" : ""} ${state.sel === w.id ? "sel" : ""}"></div>`, iconSize: [16,16], iconAnchor: [8,8]}), title: w.name});
+    m.on("click", ev => { L.DomEvent.stopPropagation(ev); selectWifi(w.id); });
+    wifiLayer.addLayer(m);
+  }
+}
+const currentItems = () => settings.mode === "wifi" ? (Array.isArray(state.wifi) ? state.wifi : []) : state.stops;
 function fitMap(){
   if (!map || !state.place) return;
-  const pts = [[state.place.lat, state.place.lon], ...state.stops.map(s => [s.lat, s.lon])];
+  const pts = [[state.place.lat, state.place.lon], ...currentItems().map(s => [s.lat, s.lon])];
   if (pts.length > 1) map.fitBounds(pts, {padding: [28, 28], maxZoom: 17});
   else map.setView(pts[0], 16);
 }
@@ -267,9 +339,14 @@ function fitMap(){
 /* ---------- Chargement ---------- */
 async function setPlace(place){
   state.place = place; store("dp:place", place);
-  state.stops = []; state.deps = {}; state.bikes = null; state.sel = null; state.err = null; drawBikes();
+  state.stops = []; state.deps = {}; state.bikes = null; state.wifi = null; state.wifiLoading = false; state.sel = null; state.err = null; drawBikes();
   drawMap(); render();
-  await loadStops();
+  await loadForMode();
+}
+async function loadForMode(){
+  if (settings.mode === "wifi") return loadWifi();
+  if (!settings.key){ drawMap(); render(); return; }
+  return loadStops();
 }
 async function loadStops(){
   if (!state.place) return;
@@ -395,6 +472,104 @@ function bikesHtml(){
       <span class="c"><span class="${b.meca ? "" : "zero"}">${b.meca}<small>méca</small></span><span class="${b.elec ? "" : "zero"}">${b.elec}<small>élec</small></span><span class="${b.docks ? "" : "zero"}">${b.docks}<small>places</small></span></span></div>`).join("")}</div>`;
 }
 
+/* ---------- Chargement wifi ---------- */
+async function loadWifi(){
+  if (!state.place) return;
+  state.wifiLoading = true; state.wifi = null; state.err = null; render();
+  const lat = state.place.lat, lon = state.place.lon, R = Math.max(settings.radius, 300);
+  let osm = [], pw = [], failed = false;
+  const q = `[out:json][timeout:25];nwr[internet_access](around:${R},${lat.toFixed(6)},${lon.toFixed(6)});out center tags 150;`;
+  try{
+    const j = await overpass(q);
+    const seen = new Set();
+    for (const el of (j.elements || [])){
+      const t = el.tags || {}; const ia = (t.internet_access || "").toLowerCase(), wf = (t.wifi || "").toLowerCase();
+      if (ia === "no") continue;
+      if (!(/wlan|wifi|yes/.test(ia) || wf === "yes" || wf === "free")) continue;
+      const g = el.type === "node" ? {lat: el.lat, lon: el.lon} : (el.center || null);
+      if (!g) continue;
+      const cat = catOf(t);
+      const name = t.name || t.brand || (WIFI_CATS[cat] || ["Lieu avec wifi"])[0];
+      const key = (t.name || "") + "|" + g.lat.toFixed(4) + "|" + g.lon.toFixed(4);
+      if (seen.has(key)) continue; seen.add(key);
+      const [feeLbl, feeKind] = feeOf(t, cat);
+      osm.push({id: el.type[0] + el.id, name, lat: g.lat, lon: g.lon, dist: distM(lat, lon, g.lat, g.lon), cat, feeLbl, feeKind, src: "osm"});
+    }
+  }catch(e){ failed = true; }
+  try{ pw = await loadParisWifi(lat, lon); }catch(e){}
+  if (failed && !pw.length){ state.wifi = {error: true}; state.wifiLoading = false; drawMap(); render(); return; }
+  state.wifi = [...pw, ...osm].sort((a,b) => a.dist - b.dist).slice(0, 40);
+  state.wifiLoading = false; state.updated = Date.now();
+  drawMap(); fitMap(); render();
+}
+function geoOf(row){
+  for (const k of ["geo_point_2d","coordonnees_geo","geopoint","geo","point_geo"]){
+    const v = row[k]; if (!v) continue;
+    if (typeof v === "object" && v.lat != null && v.lon != null) return {lat: +v.lat, lon: +v.lon};
+    if (typeof v === "string" && v.includes(",")){ const a = v.split(",").map(Number); if (a.length === 2 && !isNaN(a[0]) && !isNaN(a[1])) return {lat: a[0], lon: a[1]}; }
+  }
+  const gs = row.geo_shape || row.geoshape;
+  if (gs && gs.geometry && Array.isArray(gs.geometry.coordinates) && typeof gs.geometry.coordinates[0] === "number")
+    return {lat: gs.geometry.coordinates[1], lon: gs.geometry.coordinates[0]};
+  for (const v of Object.values(row)) if (v && typeof v === "object" && v.lat != null && v.lon != null) return {lat: +v.lat, lon: +v.lon};
+  return null;
+}
+function fieldLike(row, re){ for (const k of Object.keys(row)) if (re.test(k) && typeof row[k] === "string" && row[k].trim()) return row[k].trim(); return ""; }
+async function loadParisWifi(lat, lon){
+  if (distM(lat, lon, 48.8566, 2.3522) > 15000) return [];
+  let rows;
+  const cached = store("dp:pwifi");
+  if (cached && Array.isArray(cached.rows) && Date.now() - cached.t < 86400000) rows = cached.rows;
+  else {
+    rows = [];
+    for (let off = 0; off < 600; off += 100){
+      const r = await fetch(`${PARISWIFI}?limit=100&offset=${off}`);
+      if (!r.ok) break;
+      const j = await r.json(); const res = j.results || [];
+      rows.push(...res);
+      if (res.length < 100) break;
+    }
+    if (rows.length) store("dp:pwifi", {t: Date.now(), rows});
+  }
+  const out = [], lim = Math.max(settings.radius, 400);
+  (rows || []).forEach((row, i) => {
+    const g = geoOf(row); if (!g) return;
+    const d = distM(lat, lon, g.lat, g.lon); if (d > lim) return;
+    out.push({id: "pw" + i, name: fieldLike(row, /nom|name|site|lieu|libell|intitul|equipement/i) || "Borne Paris Wi-Fi",
+      sub: fieldLike(row, /adresse|arrondissement|cp|code_postal|ville|commune/i),
+      lat: g.lat, lon: g.lon, dist: d, cat: "paris", feeLbl: "Gratuit · officiel", feeKind: "free", src: "paris"});
+  });
+  return out;
+}
+function selectWifi(id){
+  state.sel = id; drawMap(); render();
+  const el = document.getElementById("w-" + id);
+  if (el) el.scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start"});
+  const w = (state.wifi || []).find(x => x.id === id); if (w && map) map.panTo([w.lat, w.lon]);
+}
+function wifiRow(w){
+  const [lbl, ic] = WIFI_CATS[w.cat] || ["Lieu avec wifi", "📶"];
+  const walk = Math.max(1, Math.round(w.dist / 80));
+  return `<section class="wifi ${state.sel === w.id ? "sel" : ""}" id="w-${esc(w.id)}"><button class="wifi-h" data-wifi="${esc(w.id)}">
+    <span class="wic" aria-hidden="true">${ic}</span>
+    <span class="winfo"><span class="n">${esc(w.name)}</span><span class="d">${esc(lbl)}${w.sub ? " · " + esc(w.sub) : ""} · ${Math.round(w.dist)} m · ${walk} min à pied</span></span>
+    <span class="fee ${w.feeKind}">${esc(w.feeLbl)}</span></button></section>`;
+}
+function renderWifi(L_){
+  const n = Array.isArray(state.wifi) ? state.wifi.length : 0;
+  let html = `<div class="status"><span class="grow"><b>${esc(state.place.label || "Ma position")}</b>${n ? ` · ${n} point${n > 1 ? "s" : ""} wifi` : ""}</span>
+    <button class="refresh ${state.wifiLoading ? "spin" : ""}" id="refreshBtn" aria-label="Actualiser"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>Actualiser</button></div>`;
+  if (state.wifi && state.wifi.error)
+    html += `<div class="card err"><h2>Les points wifi n'ont pas pu être chargés.</h2><p>Vérifiez votre connexion et réessayez. Le service OpenStreetMap est parfois surchargé : patientez un instant avant d'actualiser.</p></div>`;
+  else if (state.wifiLoading && !n)
+    html += `<div class="wifi"><div class="wifi-h"><span class="wic">📶</span><span class="winfo"><span class="n">Recherche des points wifi…</span></span></div><div class="skel"></div></div>`;
+  else if (!n)
+    html += `<div class="card"><h2>Aucun point wifi connu ici</h2><p>Les données viennent d'OpenStreetMap et des bornes publiques, qui ne sont pas exhaustives : un lieu peut proposer le wifi sans que ce soit indiqué. Essayez d'agrandir la zone dans les réglages, ou déplacez-vous sur la carte.</p></div>`;
+  else html += state.wifi.map(wifiRow).join("");
+  if (n) html += `<div class="legend"><span><i style="background:var(--rt)"></i>Gratuit ou public</span><span><i style="background:var(--warn)"></i>Pour les clients</span><span>OpenStreetMap + bornes publiques</span></div>`;
+  L_.innerHTML = html;
+}
+
 /* ---------- Rendu ---------- */
 function minutes(t){ return Math.round((t - Date.now()) / 60000); }
 function timeHtml(t, i){
@@ -435,7 +610,8 @@ function errText(e){
 }
 function render(){
   const L_ = $("list");
-  if (!settings.key){
+  updateSeg();
+  if (settings.mode === "transport" && !settings.key){
     L_.innerHTML = `<div class="card"><h2>Une clé gratuite à ajouter</h2>
       <p>Les horaires viennent de PRIM, le service officiel d'Île-de-France Mobilités. Il faut une clé personnelle, gratuite, à créer une seule fois.</p>
       <ol><li>Créez un compte sur <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">prim.iledefrance-mobilites.fr</a>.</li>
@@ -445,10 +621,11 @@ function render(){
     return;
   }
   if (!state.place){
-    L_.innerHTML = `<div class="card"><h2>Où êtes-vous ?</h2><p>Touchez le bouton de position en haut, tapez une adresse, ou touchez un point de la carte. Les arrêts à moins de ${settings.radius} m et leurs prochains passages s'afficheront ici.</p>
+    L_.innerHTML = `<div class="card"><h2>Où êtes-vous ?</h2><p>Touchez le bouton de position en haut, tapez une adresse, ou touchez un point de la carte. Les arrêts ou les points wifi proches s'afficheront ici.</p>
       <div class="row"><button class="btn primary" id="locBtn2">Me localiser</button></div></div>`;
     return;
   }
+  if (settings.mode === "wifi") return renderWifi(L_);
   let html = "";
   const ago = state.updated ? Math.round((Date.now() - state.updated) / 1000) : null;
   html += `<div class="status"><span class="grow"><b>${esc(state.place.label || "Ma position")}</b>${state.stops.length ? ` · ${state.stops.length} arrêt${state.stops.length > 1 ? "s" : ""}` : ""}${ago !== null ? ` · mis à jour ${ago < 60 ? "à l'instant" : `il y a ${Math.round(ago/60)} min`}` : ""}</span>
@@ -463,6 +640,7 @@ function render(){
   if (state.stops.length) html += `<div class="legend"><span><i></i>Temps réel</span><span>Gris : horaire théorique</span><span>${callsToday()} / 1 000 appels aujourd'hui</span></div>`;
   L_.innerHTML = html;
 }
+function updateSeg(){ document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === settings.mode)); }
 function selectStop(id, fromMap){
   state.sel = id; drawMap(); render();
   if (!state.deps[id]) loadDeps([id]);
@@ -475,7 +653,7 @@ function selectStop(id, fromMap){
 function openSettings(){
   $("sheet").innerHTML = `<h2 id="setTitle">Réglages</h2>
     <div class="field"><label for="sKey">Clé PRIM (jeton API)</label><input id="sKey" type="password" value="${esc(settings.key)}" placeholder="Collez votre clé ici" autocomplete="off" spellcheck="false">
-      <span class="small">Elle reste sur ce téléphone et n'est envoyée qu'à Île-de-France Mobilités. <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">Obtenir une clé</a></span></div>
+      <span class="small">Elle reste sur ce téléphone et n'est envoyée qu'à Île-de-France Mobilités. <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">Obtenir une clé</a> — utile seulement pour les Transports ; le Wifi fonctionne sans clé.</span></div>
     <div class="field"><label for="sRadius">Zone de recherche</label><select id="sRadius">${[300,500,800,1200].map(r => `<option value="${r}" ${r === settings.radius ? "selected" : ""}>${r} m (${Math.round(r/80)} min à pied)</option>`).join("")}</select></div>
     <div class="field"><label><input type="checkbox" id="sVelib" ${settings.velib ? "checked" : ""}> Afficher les stations Vélib' proches</label></div>
     <div class="field"><label>Transports affichés</label><div class="modes">${MODES.map(([k,l]) => `<label><input type="checkbox" value="${k}" ${settings.modes.includes(k) ? "checked" : ""}>${l}</label>`).join("")}</div></div>
@@ -540,7 +718,13 @@ document.addEventListener("click", e => {
   if (t.id === "setBtn" || t.id === "openSet") return openSettings();
   if (t.id === "setCancel" || t.matches(".sheet-bg")){ $("sheetWrap").hidden = true; return; }
   if (t.id === "setSave") return saveSettings();
-  if (t.id === "refreshBtn"){ if (!state.stops.length) return loadStops(); const ids = [...new Set([...state.stops.slice(0, 6).map(s => s.id), ...Object.keys(state.deps)])]; loadBikes(); return loadDeps(ids); }
+  if (t.dataset.mode){ if (t.dataset.mode !== settings.mode){ settings.mode = t.dataset.mode; store("dp:settings", settings); state.sel = null; if (state.place) loadForMode(); else { drawMap(); render(); } } return; }
+  if (t.dataset.wifi) return selectWifi(t.dataset.wifi);
+  if (t.id === "refreshBtn"){
+    if (settings.mode === "wifi") return loadWifi();
+    if (!state.stops.length) return loadStops();
+    const ids = [...new Set([...state.stops.slice(0, 6).map(s => s.id), ...Object.keys(state.deps)])]; loadBikes(); return loadDeps(ids);
+  }
   if (t.dataset.sel) return selectStop(t.dataset.sel, false);
   if (t.dataset.load) return selectStop(t.dataset.load, false);
   if (t.dataset.alert){ state.alertOpen[t.dataset.alert] = !state.alertOpen[t.dataset.alert]; render(); return; }
@@ -558,17 +742,15 @@ setInterval(() => {
 }, 90000);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && state.place && Date.now() - state.updated > 60000){
-    if (state.place.gps) locate(true, loadStops); else loadStops();
+    if (state.place.gps) locate(true, loadForMode); else loadForMode();
   }
 });
 
 /* ---------- Démarrage ---------- */
 initMap();
 render();
-if (settings.key){
-  if (state.place){ drawMap(); if (state.place.gps) locate(true, loadStops); else loadStops(); }
-  else locate(true);
-}
+if (state.place){ drawMap(); if (state.place.gps) locate(true, loadForMode); else loadForMode(); }
+else if (settings.mode === "wifi" || settings.key) locate(true);
 })();
 </script>
 </body>
