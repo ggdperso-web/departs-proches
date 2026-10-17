@@ -169,6 +169,7 @@ main{flex:1;padding:12px 16px calc(env(safe-area-inset-bottom,0px) + 32px);displ
 .daecard.sel{border-color:#e4002b;box-shadow:0 0 0 1px #e4002b}
 .daecard .wifi-h{flex:1;min-width:0}
 .daecard .wic{color:#e4002b}
+.offtag{display:inline-block;font:700 10px var(--f-body);text-transform:uppercase;letter-spacing:.04em;color:#e4002b;background:color-mix(in srgb,#e4002b 14%,transparent);border-radius:5px;padding:1px 5px;vertical-align:1px}
 .route{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0 15px;border-left:1px solid var(--line);color:var(--accent);font:700 12px var(--f-body);text-decoration:none;text-align:center}
 .route:active{background:var(--chip)}
 </style>
@@ -614,10 +615,37 @@ async function loadDae(){
       const name = t["defibrillator:location"] || t["defibrillator:location:fr"] || t.name || t.operator || "Défibrillateur";
       out.push({id: el.type[0] + el.id, name, lat: g.lat, lon: g.lon, dist: distM(lat, lon, g.lat, g.lon), desc: daeDesc(t)});
     }
-    state.dae = out.sort((a,b) => a.dist - b.dist).slice(0, 40);
-  }catch(e){ state.dae = {error: true}; }
+    const off = await loadGeodae(lat, lon, R);
+    const merged = off.slice();
+    for (const o of out) if (!off.some(g => distM(o.lat, o.lon, g.lat, g.lon) < 35)) merged.push(o);
+    state.dae = merged.sort((a,b) => a.dist - b.dist).slice(0, 40);
+  }catch(e){
+    const off = await loadGeodae(lat, lon, R).catch(() => []);
+    state.dae = off.length ? off.sort((a,b) => a.dist - b.dist).slice(0, 40) : {error: true};
+  }
   state.daeLoading = false; state.updated = Date.now();
   drawMap(); fitMap(); render();
+}
+/* Base officielle Géo'DAE (Île-de-France), produite chaque semaine par GitHub. Facultative. */
+let geodaeCache = null;
+async function loadGeodae(lat, lon, R){
+  if (geodaeCache === null){
+    try{
+      const r = await fetch("data/dae-idf.json?" + Math.floor(Date.now() / 86400000));
+      geodaeCache = r.ok ? ((await r.json()).dae || []) : [];
+    }catch(e){ geodaeCache = []; }
+  }
+  const out = [];
+  for (const d of geodaeCache){
+    const dist = distM(lat, lon, d.lat, d.lon);
+    if (dist > R) continue;
+    const parts = [];
+    if (d.a === "public") parts.push("Accès public"); else if (d.a === "prive") parts.push("Accès privé ou réservé");
+    if (d.i === 1) parts.push("À l'intérieur"); else if (d.i === 0) parts.push("À l'extérieur");
+    if (d.h === "24/7") parts.push("24h/24, 7j/7"); else if (d.h === "lim") parts.push("Horaires limités");
+    out.push({id: "g" + d.lat.toFixed(5) + d.lon.toFixed(5), name: d.n || "Défibrillateur", lat: d.lat, lon: d.lon, dist, desc: parts.join(" · "), official: true});
+  }
+  return out;
 }
 function daeDesc(t){
   const parts = [], a = (t.access || "").toLowerCase(), loc = (t.location || "").toLowerCase();
@@ -643,7 +671,7 @@ function daeRow(w){
   return `<section class="daecard ${state.sel === w.id ? "sel" : ""}" id="d-${esc(w.id)}">
     <button class="wifi-h" data-dae="${esc(w.id)}">
       <span class="wic" aria-hidden="true">🫀</span>
-      <span class="winfo"><span class="n">${esc(w.name)}</span><span class="d">${w.desc ? esc(w.desc) + " · " : ""}${Math.round(w.dist)} m · ${walk} min à pied</span></span>
+      <span class="winfo"><span class="n">${esc(w.name)}${w.official ? ' <span class="offtag">officiel</span>' : ""}</span><span class="d">${w.desc ? esc(w.desc) + " · " : ""}${Math.round(w.dist)} m · ${walk} min à pied</span></span>
     </button>
     <a class="route" href="https://maps.apple.com/?daddr=${w.lat},${w.lon}&dirflg=w" target="_blank" rel="noopener" aria-label="Itinéraire à pied vers ${esc(w.name)}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20l-5.5 2 2-18L9 2l6 2 5.5-2-2 18L15 22z"/><path d="M9 2v18M15 4v18"/></svg>Y aller</a>
@@ -661,7 +689,7 @@ function renderDae(L_){
   else if (!n)
     html += `<div class="card"><h2>Aucun défibrillateur recensé ici</h2><p>Les données viennent d'OpenStreetMap et de la base nationale Géo'DAE, qui ne sont pas exhaustives : un appareil peut exister sans être recensé. Agrandissez la zone dans les réglages, et pensez aux lieux publics (mairie, pharmacie, gare, équipement sportif).</p></div>`;
   else html += state.dae.map(daeRow).join("");
-  if (n) html += `<div class="legend"><span>Données OpenStreetMap / base nationale Géo'DAE</span><span>« Y aller » ouvre l'itinéraire à pied dans Plans</span></div>`;
+  if (n) html += `<div class="legend"><span><span class="offtag">officiel</span> = base nationale Géo'DAE · le reste : OpenStreetMap</span><span>« Y aller » ouvre l'itinéraire à pied dans Plans</span></div>`;
   L_.innerHTML = html;
 }
 
