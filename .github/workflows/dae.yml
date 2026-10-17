@@ -1,0 +1,27 @@
+name: Mise à jour des défibrillateurs (Géo'DAE)
+
+on:
+  schedule:
+    - cron: "33 3 * * 1"     # tous les lundis vers 5 h (heure de Paris)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dae:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Télécharger et filtrer la base Géo'DAE
+        run: python scripts/dae.py
+      - name: Enregistrer
+        run: |
+          git config user.name "departs-proches"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/dae-idf.json
+          git diff --cached --quiet || git commit -m "Défibrillateurs Géo'DAE du $(date +'%d/%m/%Y')"
+          git push
