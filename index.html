@@ -158,6 +158,19 @@ main{flex:1;padding:12px 16px calc(env(safe-area-inset-bottom,0px) + 32px);displ
 .wpin{width:16px;height:16px;border-radius:50%;background:var(--accent);border:2px solid #fff;box-shadow:0 1px 4px rgb(0 0 0 / .35)}
 .wpin.paris{background:var(--rt)}
 .wpin.sel{transform:scale(1.3)}
+.seg button{font-size:14px}
+.dpin{width:18px;height:18px;border-radius:50%;background:#e4002b;border:2px solid #fff;box-shadow:0 1px 4px rgb(0 0 0 / .4);display:grid;place-items:center}
+.dpin::after{content:"+";color:#fff;font:800 13px/1 var(--f-display)}
+.dpin.sel{transform:scale(1.35)}
+.sos{background:color-mix(in srgb,#e4002b 11%,var(--surface));border:1px solid color-mix(in srgb,#e4002b 55%,var(--line));border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.45}
+.sos b{color:#e4002b}
+.sos a{color:#e4002b;font-weight:800;text-decoration:underline}
+.daecard{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;align-items:stretch}
+.daecard.sel{border-color:#e4002b;box-shadow:0 0 0 1px #e4002b}
+.daecard .wifi-h{flex:1;min-width:0}
+.daecard .wic{color:#e4002b}
+.route{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0 15px;border-left:1px solid var(--line);color:var(--accent);font:700 12px var(--f-body);text-decoration:none;text-align:center}
+.route:active{background:var(--chip)}
 </style>
 </head>
 <body>
@@ -176,8 +189,9 @@ main{flex:1;padding:12px 16px calc(env(safe-area-inset-bottom,0px) + 32px);displ
     <div class="sugg" id="sugg" hidden></div>
   </form>
   <div class="seg" role="group" aria-label="Type de recherche">
-    <button type="button" data-mode="transport" aria-pressed="true">🚌 Transports</button>
+    <button type="button" data-mode="transport" aria-pressed="true">🚌 Transport</button>
     <button type="button" data-mode="wifi" aria-pressed="false">📶 Wifi</button>
+    <button type="button" data-mode="dae" aria-pressed="false">🫀 Défib</button>
   </div>
 </header>
 <div id="map" role="region" aria-label="Carte des arrêts"></div>
@@ -198,7 +212,7 @@ const MODES = [
   ["metro", "Métro"], ["rer", "RER & trains"], ["tram", "Tramway"], ["bus", "Bus"]
 ];
 const settings = Object.assign({key: "", radius: 500, modes: ["metro","rer","tram","bus"], velib: true, mode: "transport"}, store("dp:settings") || {});
-const state = {place: store("dp:place") || null, stops: [], deps: {}, bikes: null, wifi: null, wifiLoading: false, alertOpen: {}, open: {}, sel: null, loading: false, err: null, updated: 0};
+const state = {place: store("dp:place") || null, stops: [], deps: {}, bikes: null, wifi: null, wifiLoading: false, dae: null, daeLoading: false, alertOpen: {}, open: {}, sel: null, loading: false, err: null, updated: 0};
 
 /* ---------- Wifi : OpenStreetMap (Overpass) + bornes Paris Wi-Fi ---------- */
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
@@ -283,7 +297,7 @@ const hex = c => /^[0-9a-f]{6}$/i.test(c || "") ? "#" + c : null;
 
 /* ---------- Carte ---------- */
 const dark = () => { const t = document.documentElement.getAttribute("data-theme"); return t ? t === "dark" : matchMedia("(prefers-color-scheme: dark)").matches; };
-let map = null, tiles = null, stopLayer = null, wifiLayer = null, meMarker = null, radiusCircle = null;
+let map = null, tiles = null, stopLayer = null, wifiLayer = null, daeLayer = null, meMarker = null, radiusCircle = null;
 function initMap(){
   if (!window.L){ $("map").hidden = true; return; }
   map = L.map("map", {zoomControl: false, attributionControl: true}).setView([48.8566, 2.3522], 13);
@@ -292,6 +306,7 @@ function initMap(){
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", setTiles);
   stopLayer = L.layerGroup().addTo(map);
   wifiLayer = L.layerGroup().addTo(map);
+  daeLayer = L.layerGroup().addTo(map);
   map.on("click", e => { setPlace({lat: e.latlng.lat, lon: e.latlng.lng, label: "Point choisi sur la carte"}); });
 }
 function setTiles(){
@@ -313,11 +328,21 @@ function drawMap(){
   radiusCircle = L.circle(p, {radius: settings.radius, color: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0b6e75", weight: 1, fillOpacity: .05, interactive: false}).addTo(map);
   stopLayer.clearLayers();
   if (wifiLayer) wifiLayer.clearLayers();
+  if (daeLayer) daeLayer.clearLayers();
   if (settings.mode === "wifi"){ drawWifiMarkers(); return; }
+  if (settings.mode === "dae"){ drawDaeMarkers(); return; }
   for (const s of state.stops){
     const m = L.marker([s.lat, s.lon], {icon: L.divIcon({className: "", html: `<div class="stop-pin ${state.sel === s.id ? "sel" : ""}"></div>`, iconSize: [16,16], iconAnchor: [8,8]}), title: s.name});
     m.on("click", ev => { L.DomEvent.stopPropagation(ev); selectStop(s.id, true); });
     stopLayer.addLayer(m);
+  }
+}
+function drawDaeMarkers(){
+  if (!Array.isArray(state.dae)) return;
+  for (const w of state.dae){
+    const m = L.marker([w.lat, w.lon], {icon: L.divIcon({className: "", html: `<div class="dpin ${state.sel === w.id ? "sel" : ""}"></div>`, iconSize: [18,18], iconAnchor: [9,9]}), title: w.name});
+    m.on("click", ev => { L.DomEvent.stopPropagation(ev); selectDae(w.id); });
+    daeLayer.addLayer(m);
   }
 }
 function drawWifiMarkers(){
@@ -328,7 +353,7 @@ function drawWifiMarkers(){
     wifiLayer.addLayer(m);
   }
 }
-const currentItems = () => settings.mode === "wifi" ? (Array.isArray(state.wifi) ? state.wifi : []) : state.stops;
+const currentItems = () => settings.mode === "wifi" ? (Array.isArray(state.wifi) ? state.wifi : []) : settings.mode === "dae" ? (Array.isArray(state.dae) ? state.dae : []) : state.stops;
 function fitMap(){
   if (!map || !state.place) return;
   const pts = [[state.place.lat, state.place.lon], ...currentItems().map(s => [s.lat, s.lon])];
@@ -339,12 +364,13 @@ function fitMap(){
 /* ---------- Chargement ---------- */
 async function setPlace(place){
   state.place = place; store("dp:place", place);
-  state.stops = []; state.deps = {}; state.bikes = null; state.wifi = null; state.wifiLoading = false; state.sel = null; state.err = null; drawBikes();
+  state.stops = []; state.deps = {}; state.bikes = null; state.wifi = null; state.wifiLoading = false; state.dae = null; state.daeLoading = false; state.sel = null; state.err = null; drawBikes();
   drawMap(); render();
   await loadForMode();
 }
 async function loadForMode(){
   if (settings.mode === "wifi") return loadWifi();
+  if (settings.mode === "dae") return loadDae();
   if (!settings.key){ drawMap(); render(); return; }
   return loadStops();
 }
@@ -570,6 +596,75 @@ function renderWifi(L_){
   L_.innerHTML = html;
 }
 
+/* ---------- Défibrillateurs (DAE) : OpenStreetMap / base Géo'DAE ---------- */
+async function loadDae(){
+  if (!state.place) return;
+  state.daeLoading = true; state.dae = null; state.err = null; render();
+  const lat = state.place.lat, lon = state.place.lon, R = Math.max(settings.radius, 500);
+  const q = `[out:json][timeout:25];nwr[emergency=defibrillator](around:${R},${lat.toFixed(6)},${lon.toFixed(6)});out center tags 200;`;
+  try{
+    const j = await overpass(q);
+    const seen = new Set(), out = [];
+    for (const el of (j.elements || [])){
+      const t = el.tags || {};
+      const g = el.type === "node" ? {lat: el.lat, lon: el.lon} : (el.center || null);
+      if (!g) continue;
+      const key = g.lat.toFixed(5) + "|" + g.lon.toFixed(5);
+      if (seen.has(key)) continue; seen.add(key);
+      const name = t["defibrillator:location"] || t["defibrillator:location:fr"] || t.name || t.operator || "Défibrillateur";
+      out.push({id: el.type[0] + el.id, name, lat: g.lat, lon: g.lon, dist: distM(lat, lon, g.lat, g.lon), desc: daeDesc(t)});
+    }
+    state.dae = out.sort((a,b) => a.dist - b.dist).slice(0, 40);
+  }catch(e){ state.dae = {error: true}; }
+  state.daeLoading = false; state.updated = Date.now();
+  drawMap(); fitMap(); render();
+}
+function daeDesc(t){
+  const parts = [], a = (t.access || "").toLowerCase(), loc = (t.location || "").toLowerCase();
+  if (/^(yes|public|permissive)$/.test(a)) parts.push("Accès public");
+  else if (a === "customers") parts.push("Réservé aux clients");
+  else if (a === "private") parts.push("Accès privé");
+  if (t.indoor === "yes" || loc === "indoor") parts.push("À l'intérieur");
+  else if (t.indoor === "no" || loc === "outdoor") parts.push("À l'extérieur");
+  if (t.level) parts.push("Niveau " + t.level);
+  const oh = (t.opening_hours || "").toLowerCase().trim();
+  if (oh === "24/7") parts.push("24h/24, 7j/7");
+  else if (oh) parts.push("Horaires limités");
+  return parts.join(" · ");
+}
+function selectDae(id){
+  state.sel = id; drawMap(); render();
+  const el = document.getElementById("d-" + id);
+  if (el) el.scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start"});
+  const w = (state.dae || []).find(x => x.id === id); if (w && map) map.panTo([w.lat, w.lon]);
+}
+function daeRow(w){
+  const walk = Math.max(1, Math.round(w.dist / 80));
+  return `<section class="daecard ${state.sel === w.id ? "sel" : ""}" id="d-${esc(w.id)}">
+    <button class="wifi-h" data-dae="${esc(w.id)}">
+      <span class="wic" aria-hidden="true">🫀</span>
+      <span class="winfo"><span class="n">${esc(w.name)}</span><span class="d">${w.desc ? esc(w.desc) + " · " : ""}${Math.round(w.dist)} m · ${walk} min à pied</span></span>
+    </button>
+    <a class="route" href="https://maps.apple.com/?daddr=${w.lat},${w.lon}&dirflg=w" target="_blank" rel="noopener" aria-label="Itinéraire à pied vers ${esc(w.name)}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20l-5.5 2 2-18L9 2l6 2 5.5-2-2 18L15 22z"/><path d="M9 2v18M15 4v18"/></svg>Y aller</a>
+  </section>`;
+}
+function renderDae(L_){
+  const n = Array.isArray(state.dae) ? state.dae.length : 0;
+  let html = `<div class="sos">⚠ <b>En cas d'arrêt cardiaque</b>, appelez d'abord le <a href="tel:15">15</a> (ou le <a href="tel:112">112</a>) et commencez le massage cardiaque. Envoyez une autre personne chercher le défibrillateur.</div>`;
+  html += `<div class="status"><span class="grow"><b>${esc(state.place.label || "Ma position")}</b>${n ? ` · ${n} défibrillateur${n > 1 ? "s" : ""}` : ""}</span>
+    <button class="refresh ${state.daeLoading ? "spin" : ""}" id="refreshBtn" aria-label="Actualiser"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>Actualiser</button></div>`;
+  if (state.dae && state.dae.error)
+    html += `<div class="card err"><h2>La liste n'a pas pu être chargée.</h2><p>Vérifiez votre connexion et réessayez. Le service OpenStreetMap est parfois surchargé : patientez un instant.</p></div>`;
+  else if (state.daeLoading && !n)
+    html += `<div class="daecard"><div class="wifi-h"><span class="wic">🫀</span><span class="winfo"><span class="n">Recherche des défibrillateurs…</span></span></div></div>`;
+  else if (!n)
+    html += `<div class="card"><h2>Aucun défibrillateur recensé ici</h2><p>Les données viennent d'OpenStreetMap et de la base nationale Géo'DAE, qui ne sont pas exhaustives : un appareil peut exister sans être recensé. Agrandissez la zone dans les réglages, et pensez aux lieux publics (mairie, pharmacie, gare, équipement sportif).</p></div>`;
+  else html += state.dae.map(daeRow).join("");
+  if (n) html += `<div class="legend"><span>Données OpenStreetMap / base nationale Géo'DAE</span><span>« Y aller » ouvre l'itinéraire à pied dans Plans</span></div>`;
+  L_.innerHTML = html;
+}
+
 /* ---------- Rendu ---------- */
 function minutes(t){ return Math.round((t - Date.now()) / 60000); }
 function timeHtml(t, i){
@@ -626,6 +721,7 @@ function render(){
     return;
   }
   if (settings.mode === "wifi") return renderWifi(L_);
+  if (settings.mode === "dae") return renderDae(L_);
   let html = "";
   const ago = state.updated ? Math.round((Date.now() - state.updated) / 1000) : null;
   html += `<div class="status"><span class="grow"><b>${esc(state.place.label || "Ma position")}</b>${state.stops.length ? ` · ${state.stops.length} arrêt${state.stops.length > 1 ? "s" : ""}` : ""}${ago !== null ? ` · mis à jour ${ago < 60 ? "à l'instant" : `il y a ${Math.round(ago/60)} min`}` : ""}</span>
@@ -720,8 +816,10 @@ document.addEventListener("click", e => {
   if (t.id === "setSave") return saveSettings();
   if (t.dataset.mode){ if (t.dataset.mode !== settings.mode){ settings.mode = t.dataset.mode; store("dp:settings", settings); state.sel = null; if (state.place) loadForMode(); else { drawMap(); render(); } } return; }
   if (t.dataset.wifi) return selectWifi(t.dataset.wifi);
+  if (t.dataset.dae) return selectDae(t.dataset.dae);
   if (t.id === "refreshBtn"){
     if (settings.mode === "wifi") return loadWifi();
+    if (settings.mode === "dae") return loadDae();
     if (!state.stops.length) return loadStops();
     const ids = [...new Set([...state.stops.slice(0, 6).map(s => s.id), ...Object.keys(state.deps)])]; loadBikes(); return loadDeps(ids);
   }
@@ -750,7 +848,7 @@ document.addEventListener("visibilitychange", () => {
 initMap();
 render();
 if (state.place){ drawMap(); if (state.place.gps) locate(true, loadForMode); else loadForMode(); }
-else if (settings.mode === "wifi" || settings.key) locate(true);
+else if (settings.mode !== "transport" || settings.key) locate(true);
 })();
 </script>
 </body>
