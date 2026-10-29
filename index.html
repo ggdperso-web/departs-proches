@@ -369,11 +369,60 @@ async function setPlace(place){
   drawMap(); render();
   await loadForMode();
 }
+/* ---------- Transport national : Transitous (MOTIS), gratuit et sans clé ---------- */
+const TRANSITOUS = "https://api.transitous.org/api/v6/stoptimes";
+const TMODE = {SUBWAY:"metro", METRO:"metro", TRAM:"tram", FUNICULAR:"tram", AERIAL_LIFT:"tram", CABLE_CAR:"tram",
+  RAIL:"rer", SUBURBAN:"rer", REGIONAL_RAIL:"rer", REGIONAL_FAST_RAIL:"rer", HIGHSPEED_RAIL:"rer", LONG_DISTANCE:"rer", NIGHT_RAIL:"rer",
+  BUS:"bus", COACH:"bus", FERRY:"bus", ODM:"bus", RIDE_SHARING:"bus", FLEX:"bus", OTHER:"bus"};
+const tCat = m => TMODE[m] || "bus";
+const hexc = c => hex((c || "").replace("#", ""));
+function inIDF(pl){ return pl && pl.lat >= 48.10 && pl.lat <= 49.25 && pl.lon >= 1.40 && pl.lon <= 3.60; }
+function usePrim(pl){ return !!settings.key && inIDF(pl); }
+async function loadTransport(){ return usePrim(state.place) ? loadStops() : loadTransitous(); }
+async function loadTransitous(){
+  if (!state.place) return;
+  state.loading = true; state.err = null; state.bikes = null; drawBikes(); render();
+  try{
+    const now = new Date().toISOString();
+    const url = `${TRANSITOUS}?center=${state.place.lat.toFixed(6)},${state.place.lon.toFixed(6)}&radius=${settings.radius}&n=220&time=${encodeURIComponent(now)}&mode=TRANSIT`;
+    const r = await fetch(url, {headers: {Accept: "application/json"}});
+    if (!r.ok) throw new ApiError(r.status === 429 ? "quota" : "server", "HTTP " + r.status);
+    const j = await r.json();
+    const stops = new Map(), nowMs = Date.now();
+    for (const st of (j.stopTimes || [])){
+      const pl = st.place || {}; if (pl.lat == null) continue;
+      const cat = tCat(st.mode);
+      if (!settings.modes.includes(cat)) continue;
+      const when = Date.parse(pl.departure || pl.scheduledDeparture || "");
+      if (isNaN(when) || when - nowMs < -60000) continue;
+      const sid = pl.stopId || (pl.name + "@" + (+pl.lat).toFixed(4) + "," + (+pl.lon).toFixed(4));
+      if (!stops.has(sid)) stops.set(sid, {id: sid, name: pl.name || "Arrêt", lat: +pl.lat, lon: +pl.lon,
+        dist: distM(state.place.lat, state.place.lon, +pl.lat, +pl.lon), groups: new Map()});
+      const S = stops.get(sid);
+      const code = (st.routeShortName || st.displayName || "?").trim();
+      const to = (st.headsign || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+      const gk = code + "|" + to + "|" + cat;
+      if (!S.groups.has(gk)) S.groups.set(gk, {code, to, mode: cat, network: st.agencyName || "", color: hexc(st.routeColor), text: hexc(st.routeTextColor), times: []});
+      if (!st.cancelled) S.groups.get(gk).times.push({at: when, rt: !!st.realTime});
+    }
+    const arr = [...stops.values()].map(s => {
+      const groups = [...s.groups.values()].map(g => (g.times.sort((a,b) => a.at - b.at), g)).filter(g => g.times.length)
+        .sort((a,b) => MODE_ORDER[a.mode] - MODE_ORDER[b.mode] || a.code.localeCompare(b.code, "fr", {numeric: true}) || a.times[0].at - b.times[0].at);
+      return {...s, groups};
+    }).filter(s => s.groups.length).sort((a,b) => a.dist - b.dist).slice(0, 12);
+    state.stops = arr.map(s => ({id: s.id, name: s.name, lat: s.lat, lon: s.lon, dist: s.dist}));
+    state.deps = {};
+    for (const s of arr) state.deps[s.id] = {loading: false, groups: s.groups, alerts: [], at: Date.now()};
+    state.updated = Date.now();
+    drawMap(); fitMap();
+  }catch(e){ state.err = e && e.kind ? e : new ApiError("network", (e && e.message) || ""); state.stops = []; }
+  state.loading = false; render();
+}
+
 async function loadForMode(){
   if (settings.mode === "wifi") return loadWifi();
   if (settings.mode === "dae") return loadDae();
-  if (!settings.key){ drawMap(); render(); return; }
-  return loadStops();
+  return loadTransport();
 }
 async function loadStops(){
   if (!state.place) return;
@@ -462,7 +511,7 @@ function groupDeps(deps){
 const VELIB = "https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/velib-disponibilite-en-temps-reel/records";
 const yes = v => v === true || v === "OUI" || v === "oui" || v === 1 || v === "1";
 async function loadBikes(){
-  if (!settings.velib || !state.place){ state.bikes = null; drawBikes(); return; }
+  if (!settings.velib || !state.place || !inIDF(state.place)){ state.bikes = null; drawBikes(); return; }
   const pt = `geom'POINT(${state.place.lon.toFixed(6)} ${state.place.lat.toFixed(6)})'`;
   const url = `${VELIB}?where=${encodeURIComponent(`within_distance(coordonnees_geo, ${pt}, ${Math.max(settings.radius, 400)}m)`)}&order_by=${encodeURIComponent(`distance(coordonnees_geo, ${pt})`)}&limit=8`;
   try{
@@ -734,15 +783,6 @@ function errText(e){
 function render(){
   const L_ = $("list");
   updateSeg();
-  if (settings.mode === "transport" && !settings.key){
-    L_.innerHTML = `<div class="card"><h2>Une clé gratuite à ajouter</h2>
-      <p>Les horaires viennent de PRIM, le service officiel d'Île-de-France Mobilités. Il faut une clé personnelle, gratuite, à créer une seule fois.</p>
-      <ol><li>Créez un compte sur <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">prim.iledefrance-mobilites.fr</a>.</li>
-      <li>Dans le catalogue, abonnez-vous à « Calculateur Île-de-France Mobilités – Accès générique (v2) ».</li>
-      <li>Copiez votre clé (jeton API) et collez-la dans les réglages.</li></ol>
-      <div class="row"><button class="btn primary" id="openSet">Ajouter ma clé</button></div></div>`;
-    return;
-  }
   if (!state.place){
     L_.innerHTML = `<div class="card"><h2>Où êtes-vous ?</h2><p>Touchez le bouton de position en haut, tapez une adresse, ou touchez un point de la carte. Les arrêts ou les points wifi proches s'afficheront ici.</p>
       <div class="row"><button class="btn primary" id="locBtn2">Me localiser</button></div></div>`;
@@ -761,13 +801,13 @@ function render(){
   if (state.loading && !state.stops.length) html += `<div class="stop"><div class="stop-h"><span class="n">Recherche des arrêts…</span></div><div class="skel"></div><div class="skel"></div></div>`;
   else if (!state.stops.length && !state.err) html += `<div class="card"><h2>Aucun arrêt à moins de ${settings.radius} m</h2><p>Agrandissez la zone de recherche dans les réglages, ou choisissez un autre point.</p></div>`;
   html += state.stops.slice(0, 2).map(stopHtml).join("") + bikesHtml() + state.stops.slice(2).map(stopHtml).join("");
-  if (state.stops.length) html += `<div class="legend"><span><i></i>Temps réel</span><span>Gris : horaire théorique</span><span>${callsToday()} / 1 000 appels aujourd'hui</span></div>`;
+  if (state.stops.length) html += `<div class="legend"><span><i></i>Temps réel</span><span>Gris : horaire théorique</span><span>${usePrim(state.place) ? `${callsToday()} / 1 000 appels aujourd'hui` : "Données Transitous (OpenStreetMap)"}</span></div>`;
   L_.innerHTML = html;
 }
 function updateSeg(){ document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === settings.mode)); }
 function selectStop(id, fromMap){
   state.sel = id; drawMap(); render();
-  if (!state.deps[id]) loadDeps([id]);
+  if (!state.deps[id] && usePrim(state.place)) loadDeps([id]);
   const el = document.getElementById("stop-" + id);
   if (fromMap && el) el.scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start"});
   if (!fromMap && map){ const s = state.stops.find(x => x.id === id); if (s) map.panTo([s.lat, s.lon]); }
@@ -777,7 +817,7 @@ function selectStop(id, fromMap){
 function openSettings(){
   $("sheet").innerHTML = `<h2 id="setTitle">Réglages</h2>
     <div class="field"><label for="sKey">Clé PRIM (jeton API)</label><input id="sKey" type="password" value="${esc(settings.key)}" placeholder="Collez votre clé ici" autocomplete="off" spellcheck="false">
-      <span class="small">Elle reste sur ce téléphone et n'est envoyée qu'à Île-de-France Mobilités. <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">Obtenir une clé</a> — utile seulement pour les Transports ; le Wifi fonctionne sans clé.</span></div>
+      <span class="small">Elle reste sur ce téléphone et n'est envoyée qu'à Île-de-France Mobilités. <a href="https://prim.iledefrance-mobilites.fr" target="_blank" rel="noopener">Obtenir une clé</a> — facultative : elle améliore le temps réel en Île-de-France. Ailleurs en France, les transports fonctionnent sans clé.</span></div>
     <div class="field"><label for="sRadius">Zone de recherche</label><select id="sRadius">${[300,500,800,1200].map(r => `<option value="${r}" ${r === settings.radius ? "selected" : ""}>${r} m (${Math.round(r/80)} min à pied)</option>`).join("")}</select></div>
     <div class="field"><label><input type="checkbox" id="sVelib" ${settings.velib ? "checked" : ""}> Afficher les stations Vélib' proches</label></div>
     <div class="field"><label>Transports affichés</label><div class="modes">${MODES.map(([k,l]) => `<label><input type="checkbox" value="${k}" ${settings.modes.includes(k) ? "checked" : ""}>${l}</label>`).join("")}</div></div>
@@ -848,8 +888,7 @@ document.addEventListener("click", e => {
   if (t.id === "refreshBtn"){
     if (settings.mode === "wifi") return loadWifi();
     if (settings.mode === "dae") return loadDae();
-    if (!state.stops.length) return loadStops();
-    const ids = [...new Set([...state.stops.slice(0, 6).map(s => s.id), ...Object.keys(state.deps)])]; loadBikes(); return loadDeps(ids);
+    return loadTransport();
   }
   if (t.dataset.sel) return selectStop(t.dataset.sel, false);
   if (t.dataset.load) return selectStop(t.dataset.load, false);
@@ -862,9 +901,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") $("sheetWrap
 setInterval(() => { if (!document.hidden && state.stops.length) render(); }, 20000);
 setInterval(() => {
   if (document.hidden || !state.stops.length || state.loading) return;
-  const ids = Object.keys(state.deps).filter(id => state.deps[id].groups).slice(0, 6);
-  if (ids.length) loadDeps(ids);
-  loadBikes();
+  if (settings.mode === "transport") loadTransport();
 }, 90000);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && state.place && Date.now() - state.updated > 60000){
@@ -876,7 +913,7 @@ document.addEventListener("visibilitychange", () => {
 initMap();
 render();
 if (state.place){ drawMap(); if (state.place.gps) locate(true, loadForMode); else loadForMode(); }
-else if (settings.mode !== "transport" || settings.key) locate(true);
+else locate(true);
 })();
 </script>
 </body>
